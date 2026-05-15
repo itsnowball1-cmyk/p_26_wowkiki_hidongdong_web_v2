@@ -1,0 +1,682 @@
+import { useEffect, useMemo, useState } from 'react'
+import Sidebar from '../components/Sidebar'
+import TopBar from '../components/TopBar'
+import { useRouter } from '../lib/router'
+import { useAuth, roleLabel, type Role } from '../lib/auth'
+import { api, type ChildDetailDto, type DiagnosisListItem, type TreatmentListItem } from '../lib/api'
+
+type Props = { id: number }
+
+const FALLBACK_DETAIL: ChildDetailDto = {
+  child: {
+    id: 1,
+    identifier: 'HBD_P_001',
+    name: '김동동',
+    birth_date: '2019.05.12',
+    age_label: '만 6세',
+    primary_diagnosis: '조음장애',
+    service_started_at: '2025.12.01',
+    app_login_id: 'kimdongdong',
+    next_doctor_appointment: '2025.11.25',
+    next_therapy_appointment: null,
+    doctor_id: 'HBD_D_001',
+    doctor_name: '김OO',
+    doctor_department: '재활의학과',
+    therapist_id: 'HBD_T_001',
+    therapist_name: '김민지',
+    therapist_department: '언어치료학과',
+    therapist_schedule: '매주 월 16:00'
+  },
+  memos: []
+}
+
+const FALLBACK_DIAGNOSES: DiagnosisListItem[] = [
+  { id: 1, examined_at: '2025.11.24', duration_label: '15분 40초', accuracy_pct: 50, summary: '어두초성ㄱ, 어두초성ㄴ, 어두초성ㄷ' },
+  { id: 2, examined_at: '2025.10.27', duration_label: '14분 20초', accuracy_pct: 55, summary: '어두초성ㄱ, 어두초성ㄴ' },
+  { id: 3, examined_at: '2025.10.02', duration_label: '15분 40초', accuracy_pct: 60, summary: '어두초성ㄱ, 어두초성ㄴ' }
+]
+
+const FALLBACK_TREATMENTS: TreatmentListItem[] = [
+  { id: 1, treated_at: '2025.11.24', session_no: 13, trained_sound: '어두초성 ㅅ', tags_json: '["1음절","룰렛"]',  try_count: 30, avg_accuracy_pct: 45, duration_minutes: 15 },
+  { id: 2, treated_at: '2025.11.20', session_no: 12, trained_sound: '어두초성 ㅅ', tags_json: '["1음절","주사위"]', try_count: 35, avg_accuracy_pct: 52, duration_minutes: 14 },
+  { id: 3, treated_at: '2025.11.16', session_no: 11, trained_sound: '어두초성 ㅅ', tags_json: '["1음절","문장"]',  try_count: 40, avg_accuracy_pct: 60, duration_minutes: 16 }
+]
+
+export default function ChildDetail({ id }: Props) {
+  const { go } = useRouter()
+  const [detail, setDetail] = useState<ChildDetailDto>(FALLBACK_DETAIL)
+  const [diagnoses, setDiagnoses] = useState<DiagnosisListItem[]>(FALLBACK_DIAGNOSES)
+  const [treatments, setTreatments] = useState<TreatmentListItem[]>(FALLBACK_TREATMENTS)
+
+  useEffect(() => {
+    api.childDetail(id).then(setDetail).catch(() => {})
+    api.childDiagnoses(id).then(setDiagnoses).catch(() => {})
+    api.childTreatments(id).then(setTreatments).catch(() => {})
+  }, [id])
+
+  const memoByType = useMemo(() => {
+    const m: Record<Role, { content: string; updated_at: string } | null> = {
+      admin: null,
+      doctor: null,
+      therapist: null
+    }
+    for (const r of detail.memos) m[r.type] = { content: r.content, updated_at: r.updated_at }
+    return m
+  }, [detail.memos])
+
+  return (
+    <div className="min-h-screen flex bg-surface">
+      <Sidebar />
+
+      <div className="flex-1 min-w-0 flex flex-col">
+        <TopBar />
+
+        <main className="flex-1 px-6 lg:px-10 py-8 space-y-12 max-w-[1640px]">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-[18px] font-semibold text-ink-900">아동 정보</h2>
+            <button
+              type="button"
+              onClick={() => go({ name: 'list' })}
+              className="text-[12px] text-ink-900 hover:text-brand transition-colors"
+            >
+              목록으로 돌아가기 &gt;
+            </button>
+          </div>
+
+          {/* Info Table */}
+          <InfoCard child={detail.child} />
+
+          {/* Memo Cards */}
+          <section>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <MemoCard
+                childId={id}
+                role="admin"
+                initial={memoByType.admin?.content ?? ''}
+                lastEdited={memoByType.admin?.updated_at ?? '-'}
+              />
+              <MemoCard
+                childId={id}
+                role="doctor"
+                initial={memoByType.doctor?.content ?? ''}
+                lastEdited={memoByType.doctor?.updated_at ?? '-'}
+              />
+              <MemoCard
+                childId={id}
+                role="therapist"
+                initial={memoByType.therapist?.content ?? ''}
+                lastEdited={memoByType.therapist?.updated_at ?? '-'}
+              />
+            </div>
+          </section>
+
+          {/* 진단 이력 */}
+          <DiagnosisSection childId={id} diagnoses={diagnoses} />
+
+          {/* 치료 이력 */}
+          <TreatmentSection childId={id} treatments={treatments} />
+
+          <div className="text-[12px] text-ink-400 pt-4">아동 ID: {id}</div>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+/* ---------------------------------- */
+/* Info Card                          */
+/* ---------------------------------- */
+function InfoCard({ child }: { child: ChildDetailDto['child'] }) {
+  const doctorLine = child.doctor_name
+    ? `${child.doctor_name} (${child.doctor_id ?? '-'} · ${child.doctor_department ?? '-'})`
+    : '미배정'
+  const therapistLine = child.therapist_name
+    ? `${child.therapist_name} (${child.therapist_id ?? '-'} · ${child.therapist_department ?? '-'})`
+    : '미배정'
+
+  const rows = [
+    [
+      ['아동명', child.name],
+      ['생년월일', child.birth_date ?? '-'],
+      ['주진단', child.primary_diagnosis ?? '-']
+    ],
+    [
+      ['담당 의사', doctorLine],
+      ['담당 치료사', therapistLine],
+      ['하이동동 시작일', child.service_started_at ?? '-']
+    ]
+  ] as const
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 rounded-md border border-line bg-surface-card overflow-hidden">
+      {rows.map((col, ci) => (
+        <div key={ci} className={ci === 0 ? 'md:border-r md:border-line' : ''}>
+          {col.map(([label, value]) => (
+            <div key={label} className="grid grid-cols-[140px_1fr] border-b last:border-b-0 border-line">
+              <div className="bg-surface-chip text-ink-850 text-[15px] font-medium px-4 py-4 border-r border-line">
+                {label}
+              </div>
+              <div className="text-ink-600 text-[15px] px-4 py-4">{value}</div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ---------------------------------- */
+/* Memo Card — RBAC + 저장 API         */
+/* ---------------------------------- */
+function MemoCard({
+  childId,
+  role,
+  initial,
+  lastEdited
+}: {
+  childId: number
+  role: Role
+  initial: string
+  lastEdited: string
+}) {
+  const [value, setValue] = useState(initial)
+  const [savedAt, setSavedAt] = useState(lastEdited)
+  const [saving, setSaving] = useState(false)
+  const { user } = useAuth()
+  const canEdit = user?.role === role
+  const title = `${roleLabel(role)} 메모`
+
+  useEffect(() => {
+    setValue(initial)
+    setSavedAt(lastEdited)
+  }, [initial, lastEdited])
+
+  const handleSave = async () => {
+    if (!canEdit || saving) return
+    setSaving(true)
+    try {
+      const res = await api.saveMemo(childId, role, value)
+      setSavedAt(res.updated_at)
+    } catch (e) {
+      alert('저장에 실패했습니다. (워커가 실행 중인지 확인해주세요)')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="bg-surface-card border border-line rounded-[5px] p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[18px] font-semibold text-ink-850">{title}</h3>
+          {!canEdit && (
+            <span className="text-[11px] text-ink-400 px-2 py-0.5 rounded-full bg-surface-active">읽기 전용</span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!canEdit || saving}
+          className="h-10 px-5 rounded-[5px] bg-brand text-white text-[15px] font-medium hover:opacity-90 transition disabled:bg-ink-300 disabled:cursor-not-allowed"
+        >
+          {saving ? '저장 중…' : '저장'}
+        </button>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        readOnly={!canEdit}
+        placeholder={canEdit ? '메모를 입력하세요' : '아직 작성된 메모가 없습니다.'}
+        className="w-full h-[100px] resize-none border border-line rounded-[5px] p-3 text-[14px] text-ink-700 focus:outline-none focus:border-brand read-only:bg-surface-active read-only:cursor-not-allowed"
+      />
+      <div className="mt-3 text-[12px] text-ink-200">최종 정보 수정일시 : {savedAt}</div>
+    </div>
+  )
+}
+
+/* ---------------------------------- */
+/* 진단 이력                           */
+/* ---------------------------------- */
+function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: DiagnosisListItem[] }) {
+  const { go } = useRouter()
+  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
+  const latest = diagnoses[0]
+
+  return (
+    <section>
+      <h2 className="text-[18px] font-semibold text-ink-900 mb-5">진단 이력</h2>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-5 mb-6">
+        <div className="bg-surface-card border border-line rounded-[5px] p-5">
+          <div className="text-[18px] font-medium text-ink-850 mb-1">최근진단일</div>
+          <div className="text-[14px] text-ink-500">
+            {latest
+              ? `검사일 ${latest.examined_at} · 소요시간 ${latest.duration_label ?? '-'}`
+              : '진단 기록이 없습니다.'}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <MetricBlock label="자음정확도" sub="아동 개인 수치" value="70%" />
+          <MetricBlock label="단어 내 위치별 자음 정확도" sub="아동 개인 수치" value="65%" />
+          <MetricBlock label="모음정확도" sub="아동 개인 수치" value="80%" />
+        </div>
+      </div>
+
+      <DateRangeFilter range={range} onChange={setRange} />
+
+      <div className="flex items-center justify-end gap-3 my-4">
+        <span className="text-[12px] text-ink-900">[데이터 다운로드]</span>
+        <OutlineButton>엑셀 다운</OutlineButton>
+        <OutlineButton>PDF 다운</OutlineButton>
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
+        <table className="w-full min-w-[800px] text-[15px]">
+          <thead>
+            <tr className="border-b border-line bg-line-soft">
+              <Th className="w-10"><span className="sr-only">선택</span></Th>
+              <Th>진단일</Th>
+              <Th>정확도</Th>
+              <Th>진단 결과 요약</Th>
+              <Th className="w-32">상세보기</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {diagnoses.length === 0 && (
+              <tr>
+                <td colSpan={5} className="h-[80px] text-center text-ink-400">진단 기록이 없습니다.</td>
+              </tr>
+            )}
+            {diagnoses.map((row) => (
+              <tr
+                key={row.id}
+                onClick={() => go({ name: 'diagnosis', childId, diagnosisId: row.id })}
+                className="cursor-pointer hover:bg-surface-active transition-colors"
+              >
+                <Td onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand" />
+                </Td>
+                <Td className="text-ink-850">{row.examined_at}</Td>
+                <Td className="text-ink-850">{row.accuracy_pct != null ? `${row.accuracy_pct}%` : '-'}</Td>
+                <Td className="text-ink-850">{row.summary ?? '-'}</Td>
+                <Td>
+                  <button className="inline-flex items-center gap-1 text-ink-850 hover:text-brand">
+                    상세보기
+                    <svg width="6" height="10" viewBox="0 0 6 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="m1 1 4 4-4 4" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <SmallPagination />
+    </section>
+  )
+}
+
+/* ---------------------------------- */
+/* 치료 이력                           */
+/* ---------------------------------- */
+function parseTreatedAt(s: string): Date {
+  const [y, m, d] = s.split('.').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function buildChartData(
+  treatments: TreatmentListItem[],
+  period: 'week' | 'month' | '3month'
+) {
+  const cutoffDays = period === 'week' ? 7 : period === 'month' ? 30 : 90
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - cutoffDays)
+  cutoff.setHours(0, 0, 0, 0)
+
+  const filtered = treatments
+    .filter(t => t.treated_at && parseTreatedAt(t.treated_at) >= cutoff)
+    .slice(-7)
+
+  const labels = [...filtered].reverse().map(t => {
+    const parts = t.treated_at.split('.')
+    return parts.length >= 3 ? `${Number(parts[1])}/${Number(parts[2])}` : t.treated_at
+  })
+  const rev = [...filtered].reverse()
+
+  const accuracyVals = rev.map(t => t.avg_accuracy_pct ?? 0)
+  const tryVals      = rev.map(t => t.try_count      ?? 0)
+  const durationVals = rev.map(t => t.duration_minutes ?? 0)
+
+  const periodLabel = period === 'week' ? '이번주' : period === 'month' ? '이번달' : '최근 3개월'
+  const avgAcc   = accuracyVals.length ? Math.round(accuracyVals.reduce((a, b) => a + b, 0) / accuracyVals.length) : 0
+  const totalTry = tryVals.reduce((a, b) => a + b, 0)
+  const totalMin = durationVals.reduce((a, b) => a + b, 0)
+
+  return {
+    accuracy:  { labels, values: accuracyVals, maxValue: 100,                              stat: `${periodLabel} 평균 발음 정확도는 ${avgAcc}%에요.` },
+    tryCount:  { labels, values: tryVals,       maxValue: Math.max(...tryVals,      1),    stat: `${periodLabel} 총 ${totalTry}회 발음했어요.` },
+    duration:  { labels, values: durationVals,  maxValue: Math.max(...durationVals, 1),    stat: `${periodLabel} 총 ${totalMin}분을 연습했어요.` }
+  }
+}
+
+function TreatmentSection({ childId, treatments }: { childId: number; treatments: TreatmentListItem[] }) {
+  const { go } = useRouter()
+  const [period, setPeriod] = useState<'week' | 'month' | '3month'>('week')
+  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
+
+  const chartData = useMemo(() => buildChartData(treatments, period), [treatments, period])
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-[18px] font-semibold text-ink-900">치료 이력</h2>
+        <div className="flex items-center gap-4 text-[15px]">
+          {(['week', 'month', '3month'] as const).map((p) => {
+            const label = p === 'week' ? '주간' : p === 'month' ? '월간' : '3개월'
+            return (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`pb-1 border-b-2 ${
+                  period === p ? 'border-brand text-brand font-semibold' : 'border-transparent text-ink-500'
+                }`}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-6 mb-4 text-[14px] text-ink-850">
+        <LegendDot color="bg-chart-green" label="P (성공)" />
+        <LegendDot color="bg-chart-orange" label="F (실패)" />
+        <LegendDot color="bg-chart-red" label="T (시도)" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <ChartCard title="정확도 (%)"   data={chartData.accuracy} />
+        <ChartCard title="발음 횟수 (회)" data={chartData.tryCount} />
+        <ChartCard title="훈련시간 (분)" data={chartData.duration} />
+      </div>
+
+      <DateRangeFilter range={range} onChange={setRange} />
+
+      <div className="flex items-center justify-end gap-3 my-4">
+        <span className="text-[12px] text-ink-900">[데이터 다운로드]</span>
+        <OutlineButton>엑셀 다운</OutlineButton>
+        <OutlineButton>PDF 다운</OutlineButton>
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
+        <table className="w-full min-w-[900px] text-[15px]">
+          <thead>
+            <tr className="border-b border-line bg-line-soft">
+              <Th>치료일</Th>
+              <Th>회기</Th>
+              <Th>훈련조음</Th>
+              <Th>치료 분야</Th>
+              <Th>발음 시도 횟수</Th>
+              <Th>평균정확도</Th>
+              <Th className="w-32">상세보기</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {treatments.length === 0 && (
+              <tr>
+                <td colSpan={7} className="h-[80px] text-center text-ink-400">치료 기록이 없습니다.</td>
+              </tr>
+            )}
+            {treatments.map((row) => {
+              const tags = parseTags(row.tags_json)
+              return (
+                <tr
+                  key={row.id}
+                  onClick={() => go({ name: 'treatment', childId, treatmentId: row.id })}
+                  className="cursor-pointer hover:bg-surface-active transition-colors"
+                >
+                  <Td className="text-ink-850">{row.treated_at}</Td>
+                  <Td className="text-ink-850">{row.session_no ?? '-'}회기</Td>
+                  <Td className="text-ink-850">{row.trained_sound ?? '-'}</Td>
+                  <Td>
+                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                      {tags.map((t) => (
+                        <Tag key={t} label={t} />
+                      ))}
+                    </div>
+                  </Td>
+                  <Td className="text-ink-850">{row.try_count ?? 0}회</Td>
+                  <Td className="text-ink-850">{row.avg_accuracy_pct != null ? `${row.avg_accuracy_pct}%` : '-'}</Td>
+                  <Td>
+                    <button className="inline-flex items-center gap-1 text-ink-850 hover:text-brand">
+                      상세보기
+                      <svg width="6" height="10" viewBox="0 0 6 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="m1 1 4 4-4 4" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </Td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <SmallPagination />
+    </section>
+  )
+}
+
+function parseTags(json: string | null): string[] {
+  if (!json) return []
+  try {
+    const arr = JSON.parse(json)
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/* ---------------------------------- */
+/* Shared building blocks             */
+/* ---------------------------------- */
+function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th className={`h-[45px] px-3 text-center font-medium text-[15px] text-ink-850 ${className}`}>
+      {children}
+    </th>
+  )
+}
+
+function Td({
+  children,
+  className = '',
+  onClick
+}: {
+  children: React.ReactNode
+  className?: string
+  onClick?: (e: React.MouseEvent<HTMLTableCellElement>) => void
+}) {
+  return (
+    <td onClick={onClick} className={`h-[45px] px-3 text-center border-t border-line ${className}`}>
+      {children}
+    </td>
+  )
+}
+
+function MetricBlock({ label, sub, value }: { label: string; sub: string; value: string }) {
+  return (
+    <div className="bg-surface-card border border-line rounded-[5px] p-4 flex flex-col justify-between min-w-[140px]">
+      <div>
+        <div className="text-[14px] font-medium text-ink-850 leading-snug">{label}</div>
+        <div className="text-[12px] text-ink-400 mt-1">{sub}</div>
+      </div>
+      <div className="text-[24px] font-semibold text-brand mt-3">{value}</div>
+    </div>
+  )
+}
+
+function DateRangeFilter({
+  range,
+  onChange
+}: {
+  range: 'today' | '1w' | '1m' | '3m' | '12m'
+  onChange: (r: 'today' | '1w' | '1m' | '3m' | '12m') => void
+}) {
+  const chips: Array<['today' | '1w' | '1m' | '3m' | '12m', string]> = [
+    ['today', '오늘'],
+    ['1w', '1주일'],
+    ['1m', '1개월'],
+    ['3m', '3개월'],
+    ['12m', '12개월']
+  ]
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 bg-surface-card border border-line rounded-[5px] p-4">
+      <span className="text-[15px] font-medium text-ink-850">조회기간</span>
+      <div className="flex items-center gap-2">
+        {chips.map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => onChange(key)}
+            className={`h-7 px-3 rounded-[3px] text-[12px] font-medium border transition ${
+              range === key
+                ? 'border-brand bg-brand text-white'
+                : 'border-line bg-surface-card text-ink-700 hover:border-brand'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 ml-2">
+        <DateInput value="2025.02.03" />
+        <span className="text-ink-500">~</span>
+        <DateInput value="2025.03.03" />
+      </div>
+
+      <button className="h-7 px-4 rounded-[3px] bg-brand text-white text-[12px] font-medium ml-auto hover:opacity-90 transition">
+        조회
+      </button>
+    </div>
+  )
+}
+
+function DateInput({ value }: { value: string }) {
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        defaultValue={value}
+        className="h-7 w-[110px] px-2 pr-7 border border-line rounded-[3px] text-[12px] text-ink-700 focus:outline-none focus:border-brand"
+        readOnly
+      />
+      <svg className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <path d="M16 2v4M8 2v4M3 10h18" />
+      </svg>
+    </div>
+  )
+}
+
+function OutlineButton({ children }: { children: React.ReactNode }) {
+  return (
+    <button className="h-9 px-3 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors">
+      {children}
+    </button>
+  )
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className={`w-3 h-3 rounded-full ${color}`} />
+      {label}
+    </span>
+  )
+}
+
+function Tag({ label }: { label: string }) {
+  const colors: Record<string, string> = {
+    '1음절': 'bg-tag-yellow text-ink-700',
+    룰렛: 'bg-tag-green text-ink-700',
+    주사위: 'bg-tag-blue text-ink-700',
+    문장: 'bg-tag-pink text-ink-700'
+  }
+  const cls = colors[label] ?? 'bg-tag-yellow text-ink-700'
+  return <span className={`inline-block px-2 py-0.5 rounded-[10px] text-[12px] ${cls}`}>{label}</span>
+}
+
+type ChartCardData = { labels: string[]; values: number[]; maxValue: number; stat: string }
+
+function ChartCard({ title, data }: { title: string; data: ChartCardData }) {
+  const { labels, values, maxValue, stat } = data
+  return (
+    <div className="bg-surface-card border border-line rounded-[5px] p-4">
+      <div className="text-[14px] font-medium text-ink-850 mb-3">{title}</div>
+      <div className="h-[140px] flex items-end gap-3 border-b border-dashed border-line-dash relative">
+        <span className="absolute top-0 right-0 text-[10px] text-ink-300">목표</span>
+        {labels.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center text-[12px] text-ink-400 pb-4">데이터 없음</div>
+        ) : labels.map((label, i) => {
+          const pct = maxValue > 0 ? Math.round((values[i] / maxValue) * 100) : 0
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-full flex items-end justify-center gap-0.5" style={{ height: '120px' }}>
+                <span className="w-2 bg-chart-green  rounded-sm" style={{ height: `${pct}%` }} />
+                <span className="w-2 bg-chart-orange rounded-sm" style={{ height: `${pct > 0 ? Math.max(8, pct - 20) : 0}%` }} />
+                <span className="w-2 bg-chart-red    rounded-sm" style={{ height: `${pct > 0 ? Math.max(15, pct - 10) : 0}%` }} />
+              </div>
+              <span className="text-[11px] text-ink-500 truncate max-w-full">{label}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-3 text-[13px] text-ink-700">
+        {stat.split(/(\d+%?|\d+회|\d+분)/g).map((part, i) =>
+          /\d/.test(part) ? (
+            <span key={i} className="text-accent-highlight font-semibold">{part}</span>
+          ) : (
+            <span key={i}>{part}</span>
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SmallPagination({ pages = [1] }: { pages?: number[] }) {
+  if (pages.length <= 1) {
+    return (
+      <div className="flex items-center justify-center gap-1 mt-6">
+        <button className="w-7 h-7 rounded-[3px] text-[15px] font-medium bg-line-dash text-ink-700">
+          1
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center justify-center gap-1 mt-6 text-[15px] text-ink-500">
+      <button className="w-7 h-7 grid place-items-center hover:text-brand">
+        <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 1 1 6l5 5" strokeLinecap="round" /></svg>
+      </button>
+      {pages.map((n) => (
+        <button
+          key={n}
+          className={`w-7 h-7 rounded-[3px] font-medium transition ${
+            n === 1 ? 'bg-line-dash text-ink-700' : 'text-ink-500 hover:bg-surface-active'
+          }`}
+        >
+          {n}
+        </button>
+      ))}
+      <button className="w-7 h-7 grid place-items-center hover:text-brand">
+        <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="m1 1 5 5-5 5" strokeLinecap="round" /></svg>
+      </button>
+    </div>
+  )
+}
