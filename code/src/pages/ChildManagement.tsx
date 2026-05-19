@@ -30,7 +30,7 @@ export default function ChildManagement() {
     setAssignedPage(1)
     if (!q) return assigned
     return assigned.filter((r) =>
-      [r.identifier, r.therapist_name, r.next_doctor_appointment, r.next_therapy_appointment]
+      [r.child_name, r.identifier, r.birth_date, r.gender, r.app_login_id, r.therapist_name, r.next_doctor_appointment, r.next_therapy_appointment]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     )
@@ -104,11 +104,15 @@ export default function ChildManagement() {
             </div>
 
             <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
-              <table className="w-full min-w-[800px] text-[15px]">
+              <table className="w-full min-w-[900px] text-[15px]">
                 <thead>
                   <tr className="border-b border-line bg-line-soft">
                     <Th>순번</Th>
+                    <Th>이름(나이)</Th>
                     <Th>식별코드</Th>
+                    <Th>생년월일</Th>
+                    <Th>성별</Th>
+                    <Th>아이디</Th>
                     <Th>다음 진료 예약</Th>
                     <Th>담당 치료사</Th>
                     <Th>다음 치료 예약</Th>
@@ -117,14 +121,14 @@ export default function ChildManagement() {
                 <tbody>
                   {loading && Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}>
-                      {[28, 80, 96, 64, 96].map((w, j) => (
-                        <Td key={j}><div className={`h-4 rounded animate-pulse bg-line mx-auto`} style={{ width: w }} /></Td>
+                      {[28, 80, 80, 80, 48, 80, 96, 64, 96].map((w, j) => (
+                        <Td key={j}><div className="h-4 rounded animate-pulse bg-line mx-auto" style={{ width: w }} /></Td>
                       ))}
                     </tr>
                   ))}
                   {!loading && filteredAssigned.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="h-[80px] text-center text-ink-400">검색 결과가 없습니다.</td>
+                      <td colSpan={9} className="h-[80px] text-center text-ink-400">검색 결과가 없습니다.</td>
                     </tr>
                   )}
                   {!loading && pagedAssigned.map((row, i) => (
@@ -134,7 +138,13 @@ export default function ChildManagement() {
                       className="cursor-pointer hover:bg-surface-active transition-colors"
                     >
                       <Td className="text-ink-600">{(assignedPage - 1) * PAGE_SIZE + i + 1}</Td>
-                      <Td className="text-ink-700 underline-offset-2 hover:underline">{row.identifier}</Td>
+                      <Td className="text-ink-700">
+                        {row.child_name ?? '-'}{row.age_label ? `(${row.age_label})` : ''}
+                      </Td>
+                      <Td className="text-ink-600">{row.identifier}</Td>
+                      <Td className="text-ink-600">{row.birth_date ?? '-'}</Td>
+                      <Td className="text-ink-600">{row.gender ?? '-'}</Td>
+                      <Td className="text-ink-600">{row.app_login_id ?? '-'}</Td>
                       <Td className="text-ink-600">{row.next_doctor_appointment ?? '-'}</Td>
                       <Td className="text-ink-600">{row.therapist_name ?? '-'}</Td>
                       <Td className="text-ink-600">{row.next_therapy_appointment ?? '-'}</Td>

@@ -439,6 +439,102 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       })
     }
 
+    // GET /api/dashboard (의사/치료사용)
+    if (path === '/api/dashboard' && method === 'GET') {
+      const staffCode = user.code || user.id
+      let codeWhere = ''
+      const codeArgs: unknown[] = []
+      if (user.mtype === 'doctor') {
+        codeWhere = 'AND c.doctor_code = ?'
+        codeArgs.push(staffCode)
+      } else if (user.mtype === 'healler') {
+        codeWhere = 'AND c.teacher_code = ?'
+        codeArgs.push(staffCode)
+      }
+
+      const [childRows] = await conn.query<RowDataPacket[]>(
+        `SELECT
+           c.idx          AS id,
+           c.id           AS identifier,
+           c.name,
+           c.birth_date,
+           c.regist_date,
+           (SELECT r.analysislog
+            FROM tb_childact_report r
+            WHERE r.id = c.id AND r.use_type = 'training'
+              AND DATE(r.act_date) = CURDATE()
+            ORDER BY r.idx DESC LIMIT 1)              AS today_log,
+           (SELECT r.analysislog
+            FROM tb_childact_report r
+            WHERE r.id = c.id AND r.use_type = 'training'
+            ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS latest_log,
+           (SELECT DATEDIFF(CURDATE(), DATE(r.act_date))
+            FROM tb_childact_report r
+            WHERE r.id = c.id AND r.use_type = 'training'
+            ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS days_since_trained
+         FROM tb_member c
+         WHERE c.mtype = 'child' AND c.delete_yn = 'N' AND c.instt_code = ?
+           ${codeWhere}
+         ORDER BY c.idx`,
+        [user.instt_code, ...codeArgs]
+      )
+      type DRow = RowDataPacket & { id: number; identifier: string; name: string; birth_date: unknown; regist_date: unknown; today_log: string|null; latest_log: string|null; days_since_trained: number|null }
+
+      const thisMonth = new Date(); const lastMonth = new Date()
+      lastMonth.setMonth(lastMonth.getMonth() - 1)
+
+      let trainedToday = 0, trainedYesterday = 0, totalAccuracy = 0, accuracyCount = 0, noCustom = 0
+      let newThisMonth = 0, newLastMonth = 0
+
+      const [yesterdayRows] = await conn.query<RowDataPacket[]>(
+        `SELECT DISTINCT id FROM tb_childact_report
+         WHERE use_type = 'training' AND DATE(act_date) = CURDATE() - INTERVAL 1 DAY
+           AND id IN (SELECT id FROM tb_member WHERE mtype='child' AND delete_yn='N' AND instt_code=? ${codeWhere.replace('c.doctor_code','doctor_code').replace('c.teacher_code','teacher_code')})`,
+        [user.instt_code, ...codeArgs]
+      )
+      trainedYesterday = (yesterdayRows as RowDataPacket[]).length
+
+      const children = (childRows as DRow[]).map(r => {
+        const todayP  = parseAnalysislog(r.today_log)
+        const latestP = parseAnalysislog(r.latest_log)
+        const todayAcc = todayP.accuracy_pct
+        const hasTrainedToday = r.today_log != null
+
+        if (hasTrainedToday) trainedToday++
+        if (todayAcc != null) { totalAccuracy += todayAcc; accuracyCount++ }
+        if (!latestP.trained_sound) noCustom++
+
+        const rd = r.regist_date instanceof Date ? r.regist_date : r.regist_date ? new Date(r.regist_date as string) : null
+        if (rd) {
+          if (rd.getFullYear() === thisMonth.getFullYear() && rd.getMonth() === thisMonth.getMonth()) newThisMonth++
+          if (rd.getFullYear() === lastMonth.getFullYear() && rd.getMonth() === lastMonth.getMonth()) newLastMonth++
+        }
+
+        return {
+          id:                r.id,
+          identifier:        r.identifier,
+          name:              r.name,
+          birth_date:        fmtDate(r.birth_date),
+          age_label:         ageLabel(r.birth_date),
+          today_accuracy:    todayAcc,
+          current_sound:     latestP.trained_sound ?? null,
+          days_since_trained: r.days_since_trained ?? null,
+        }
+      })
+
+      return json({
+        stats: {
+          total_children:      children.length,
+          total_delta:         newThisMonth - newLastMonth,
+          trained_today:       trainedToday,
+          trained_today_delta: trainedToday - trainedYesterday,
+          avg_accuracy:        accuracyCount > 0 ? Math.round(totalAccuracy / accuracyCount) : null,
+          no_custom:           noCustom,
+        },
+        children,
+      })
+    }
+
     // GET /api/children/assigned
     if (path === '/api/children/assigned' && method === 'GET') {
       // 의사·치료사는 본인 배정 아동만, admin 은 기관 전체
@@ -458,6 +554,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            c.idx          AS id,
            c.id           AS identifier,
            c.name         AS child_name,
+           c.birth_date,
+           c.is_male_yn,
            c.doctor_code,
            c.teacher_code,
            d.name         AS doctor_name,
@@ -482,7 +580,28 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
          ORDER BY c.idx`,
         [user.instt_code, ...codeArgs]
       )
-      return json(rows)
+      type AssignedRow = RowDataPacket & {
+        id: number; identifier: string; child_name: string | null
+        birth_date: unknown; is_male_yn: string | null
+        doctor_code: string | null; teacher_code: string | null
+        doctor_name: string | null; therapist_name: string | null
+        next_doctor_appointment: string | null; next_therapy_appointment: string | null
+      }
+      return json((rows as AssignedRow[]).map(r => ({
+        id: r.id,
+        identifier: r.identifier,
+        child_name: r.child_name,
+        birth_date: fmtDate(r.birth_date),
+        age_label: ageLabel(r.birth_date),
+        gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : null,
+        app_login_id: r.identifier,
+        doctor_code: r.doctor_code,
+        teacher_code: r.teacher_code,
+        doctor_name: r.doctor_name,
+        therapist_name: r.therapist_name,
+        next_doctor_appointment: r.next_doctor_appointment,
+        next_therapy_appointment: r.next_therapy_appointment,
+      })))
     }
 
     // GET /api/children/unassigned
@@ -563,8 +682,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
 
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT
-           c.idx AS id,
-           c.id  AS identifier,
+           c.idx         AS id,
+           c.id          AS identifier,
+           c.name,
+           c.birth_date,
+           c.is_male_yn,
            t.name AS therapist_name,
            (SELECT r.analysislog
             FROM tb_childact_report r
@@ -584,13 +706,17 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
          ORDER BY c.idx`,
         [user.instt_code, ...codeArgs]
       )
-      type CRow = RowDataPacket & { id: number; identifier: string; therapist_name: string | null; latest_training_log: string | null; last_diagnosis: string | null }
+      type CRow = RowDataPacket & { id: number; identifier: string; name: string | null; birth_date: unknown; is_male_yn: string | null; therapist_name: string | null; latest_training_log: string | null; last_diagnosis: string | null }
       return json((rows as CRow[]).map(r => {
         const p = parseAnalysislog(r.latest_training_log)
         return {
           id:             r.id,
           identifier:     r.identifier,
-          therapist_name: r.therapist_name ?? '-',
+          name:           r.name ?? null,
+          birth_date:     fmtDate(r.birth_date),
+          age_label:      ageLabel(r.birth_date),
+          gender:         r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : null,
+          therapist_name: r.therapist_name ?? null,
           current_sound:  p.summary,
           upcoming_sound: null,
           last_diagnosis: r.last_diagnosis
@@ -699,10 +825,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            c.doctor_memo,
            c.teacher_memo,
            c.update_date,
-           d.idx                  AS doctor_id,
+           d.code                 AS doctor_id,
            d.name                 AS doctor_name,
            d.depart_code          AS doctor_department,
-           t.idx                  AS therapist_id,
+           t.code                 AS therapist_id,
            t.name                 AS therapist_name,
            t.depart_code          AS therapist_department,
            (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
@@ -746,6 +872,44 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
           { type: 'therapist', content: teacher_memo  ?? '', updated_at: updatedAt }
         ]
       })
+    }
+
+    // PUT /api/children/:id/primary-diagnosis  (doctor only)
+    const diagUpdateMatch = path.match(/^\/api\/children\/(\d+)\/primary-diagnosis$/)
+    if (diagUpdateMatch && method === 'PUT') {
+      if (user.mtype !== 'doctor') return err(403, 'doctor only')
+      const cid = Number(diagUpdateMatch[1])
+      if (!(await ownsChild(conn, cid, user))) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { primary_diagnosis?: string }
+      const val = (body.primary_diagnosis ?? '').toString().trim()
+      if (!val) return err(400, 'primary_diagnosis required')
+      await conn.query(
+        `UPDATE tb_member SET attribution = ? WHERE idx = ? AND mtype = 'child'`,
+        [val, cid]
+      )
+      return json({ ok: true })
+    }
+
+    // PUT /api/children/:id/assign-therapist  (doctor only, only if unassigned)
+    const assignTherapistMatch = path.match(/^\/api\/children\/(\d+)\/assign-therapist$/)
+    if (assignTherapistMatch && method === 'PUT') {
+      if (user.mtype !== 'doctor') return err(403, 'doctor only')
+      const cid = Number(assignTherapistMatch[1])
+      if (!(await ownsChild(conn, cid, user))) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { therapist_code?: string }
+      const code = (body.therapist_code ?? '').toString().trim()
+      if (!code) return err(400, 'therapist_code required')
+      const [existing] = await conn.query<RowDataPacket[]>(
+        `SELECT teacher_code FROM tb_member WHERE idx = ? AND mtype = 'child' LIMIT 1`, [cid]
+      )
+      if ((existing[0] as { teacher_code: string | null } | undefined)?.teacher_code) {
+        return err(409, 'already assigned')
+      }
+      await conn.query(
+        `UPDATE tb_member SET teacher_code = ? WHERE idx = ? AND mtype = 'child'`,
+        [code, cid]
+      )
+      return json({ ok: true })
     }
 
     // GET /api/children/:id/diagnoses
@@ -1132,6 +1296,653 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         tags: tp.tags_json ? (JSON.parse(tp.tags_json) as string[]) : [],
         weekly
       })
+    }
+
+    // GET /api/faq
+    if (path === '/api/faq' && method === 'GET') {
+      const gubun  = url.searchParams.get('gubun')  ?? ''
+      const search = url.searchParams.get('search') ?? ''
+
+      const whereArgs: unknown[] = []
+      let where = `WHERE BOARD_ID = 'faq'`
+      if (gubun === '기타') {
+        where += ` AND (GUBUN = '기타' OR GUBUN = '' OR GUBUN IS NULL)`
+      } else if (gubun) {
+        where += ' AND GUBUN = ?'; whereArgs.push(gubun)
+      }
+      if (search) { where += ' AND BOARD_TITLE LIKE ?'; whereArgs.push(`%${search}%`) }
+
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT BOARD_KEY, BOARD_TITLE, GUBUN FROM tb_board_list ${where} ORDER BY BOARD_KEY ASC`,
+        whereArgs
+      )
+      return json({ items: rows })
+    }
+
+    // GET /api/faq/:id
+    const faqDetailMatch = path.match(/^\/api\/faq\/(\d+)$/)
+    if (faqDetailMatch && method === 'GET') {
+      const fid = Number(faqDetailMatch[1])
+
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT BOARD_KEY, BOARD_TITLE, BOARD_CONTENT, REPLY_MEMO, GUBUN
+         FROM tb_board_list WHERE BOARD_KEY = ? AND BOARD_ID = 'faq' LIMIT 1`, [fid]
+      )
+      if (!rows[0]) return err(404, 'not found')
+
+      const [fileRows] = await conn.query<RowDataPacket[]>(
+        `SELECT BF_IDX, ATTACH_NM, FILE_NM, REPLY_YN FROM tb_board_file
+         WHERE BOARD_KEY = ? AND ATTACH_TYPE = 'I' ORDER BY BF_IDX`, [fid]
+      )
+      type FRow = { BF_IDX: number; ATTACH_NM: string; FILE_NM: string; REPLY_YN: string }
+      const files = fileRows as FRow[]
+
+      return json({
+        ...rows[0],
+        question_images: files.filter(f => f.REPLY_YN === 'N').map(({ BF_IDX, ATTACH_NM, FILE_NM }) => ({ BF_IDX, ATTACH_NM, FILE_NM })),
+        answer_images:   files.filter(f => f.REPLY_YN === 'Y').map(({ BF_IDX, ATTACH_NM, FILE_NM }) => ({ BF_IDX, ATTACH_NM, FILE_NM }))
+      })
+    }
+
+    // GET /api/notices
+    if (path === '/api/notices' && method === 'GET') {
+      const page     = Math.max(1, Number(url.searchParams.get('page') ?? '1'))
+      const gubun    = url.searchParams.get('gubun') ?? ''
+      const search   = url.searchParams.get('search') ?? ''
+      const pageSize = 10
+
+      const whereArgs: unknown[] = []
+      let where = `WHERE BOARD_ID = 'notice'`
+      if (gubun)  { where += ' AND GUBUN = ?';            whereArgs.push(gubun) }
+      if (search) { where += ' AND BOARD_TITLE LIKE ?';  whereArgs.push(`%${search}%`) }
+
+      const [[countRow]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM tb_board_list ${where}`, whereArgs
+      ) as [Array<{ total: number }>, unknown]
+
+      const [catRows] = await conn.query<RowDataPacket[]>(
+        `SELECT DISTINCT GUBUN FROM tb_board_list WHERE BOARD_ID = 'notice' AND GUBUN IS NOT NULL AND GUBUN != '' ORDER BY GUBUN`
+      )
+
+      const offset = (page - 1) * pageSize
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE,
+                DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS reg_date, BOARD_READ_COUNT
+         FROM tb_board_list ${where}
+         ORDER BY BOARD_FIXED DESC, BOARD_SAVE_DATE DESC, BOARD_KEY DESC
+         LIMIT ? OFFSET ?`,
+        [...whereArgs, pageSize, offset]
+      )
+
+      return json({
+        total: countRow.total,
+        categories: (catRows as Array<{ GUBUN: string }>).map(r => r.GUBUN),
+        items: rows
+      })
+    }
+
+    // GET /api/notices/:id
+    const noticeDetailMatch = path.match(/^\/api\/notices\/(\d+)$/)
+    if (noticeDetailMatch && method === 'GET') {
+      const nid = Number(noticeDetailMatch[1])
+
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE, BOARD_CONTENT,
+                DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS reg_date, BOARD_READ_COUNT
+         FROM tb_board_list WHERE BOARD_KEY = ? AND BOARD_ID = 'notice' LIMIT 1`, [nid]
+      )
+      if (!rows[0]) return err(404, 'not found')
+
+      const [fileRows] = await conn.query<RowDataPacket[]>(
+        `SELECT BF_IDX, FILE_NM, ATTACH_TYPE, FILE_SIZE FROM tb_board_file
+         WHERE BOARD_KEY = ? AND REPLY_YN = 'N' ORDER BY BF_IDX`, [nid]
+      )
+
+      return json({ ...rows[0], attachments: fileRows })
+    }
+
+    // POST /api/notices/:id/view
+    const noticeViewMatch = path.match(/^\/api\/notices\/(\d+)\/view$/)
+    if (noticeViewMatch && method === 'POST') {
+      const nid = Number(noticeViewMatch[1])
+      await conn.query(
+        `UPDATE tb_board_list SET BOARD_READ_COUNT = BOARD_READ_COUNT + 1
+         WHERE BOARD_KEY = ? AND BOARD_ID = 'notice'`, [nid]
+      )
+      return json({ ok: true })
+    }
+
+    // ── Admin endpoints ──────────────────────────────────────────────────────
+    const isAdmin = ['iadmin', 'sadmin', 'wadmin'].includes(user.mtype)
+
+    // GET /api/admin/children
+    if (path === '/api/admin/children' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const search = url.searchParams.get('search') ?? ''
+      const args: unknown[] = ['child', user.instt_code, 'N']
+      let searchWhere = ''
+      if (search) { searchWhere = ' AND (c.name LIKE ? OR c.id LIKE ?)'; args.push(`%${search}%`, `%${search}%`) }
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT c.idx, c.id AS identifier, c.name, c.birth_date, c.is_male_yn,
+                c.regist_date, c.doctor_code, c.teacher_code,
+                d.name AS doctor_name, t.name AS therapist_name
+         FROM tb_member c
+         LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         WHERE c.mtype = ? AND c.instt_code = ? AND c.delete_yn = ? ${searchWhere}
+         ORDER BY c.regist_date DESC, c.idx DESC`,
+        args
+      )
+      const nowMs = Date.now()
+      const NEW_MS = 7 * 24 * 3600 * 1000
+      type CRow = RowDataPacket & { idx: number; identifier: string; name: string; birth_date: unknown; is_male_yn: string | null; regist_date: unknown; doctor_code: string | null; teacher_code: string | null; doctor_name: string | null; therapist_name: string | null }
+      return json((rows as CRow[]).map(r => {
+        const rd = r.regist_date instanceof Date ? r.regist_date : r.regist_date ? new Date(r.regist_date as string) : null
+        return {
+          id: r.idx, identifier: r.identifier, name: r.name,
+          birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
+          gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          regist_date: rd ? rd.toISOString().slice(0, 16).replace('T', ' ') : null,
+          is_new: rd ? (nowMs - rd.getTime()) < NEW_MS : false,
+          doctor_code: r.doctor_code, doctor_name: r.doctor_name,
+          teacher_code: r.teacher_code, therapist_name: r.therapist_name,
+        }
+      }))
+    }
+
+    // DELETE /api/admin/children (bulk soft-delete)
+    if (path === '/api/admin/children' && method === 'DELETE') {
+      if (!isAdmin) return err(403, 'admin only')
+      const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
+      const ids = body.ids ?? []
+      if (!ids.length) return json({ deleted: 0 })
+      const [result] = await conn.query<ResultSetHeader>(
+        `UPDATE tb_member SET delete_yn = 'Y', update_date = NOW()
+         WHERE idx IN (${ph(ids.length)}) AND mtype = 'child' AND instt_code = ?`,
+        [...ids, user.instt_code]
+      )
+      return json({ deleted: result.affectedRows })
+    }
+
+    // DELETE /api/admin/members (bulk soft-delete)
+    if (path === '/api/admin/members' && method === 'DELETE') {
+      if (!isAdmin) return err(403, 'admin only')
+      const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
+      const ids = body.ids ?? []
+      if (!ids.length) return json({ deleted: 0 })
+      const [result] = await conn.query<ResultSetHeader>(
+        `UPDATE tb_member SET delete_yn = 'Y', update_date = NOW()
+         WHERE idx IN (${ph(ids.length)}) AND mtype IN ('doctor', 'healler') AND instt_code = ?`,
+        [...ids, user.instt_code]
+      )
+      return json({ deleted: result.affectedRows })
+    }
+
+    // PUT /api/admin/members/restore
+    if (path === '/api/admin/members/restore' && method === 'PUT') {
+      if (!isAdmin) return err(403, 'admin only')
+      const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
+      const ids = body.ids ?? []
+      if (!ids.length) return json({ restored: 0 })
+      const [result] = await conn.query<ResultSetHeader>(
+        `UPDATE tb_member SET delete_yn = 'N', update_date = NOW()
+         WHERE idx IN (${ph(ids.length)}) AND instt_code = ? AND delete_yn = 'Y'`,
+        [...ids, user.instt_code]
+      )
+      return json({ restored: result.affectedRows })
+    }
+
+    // PUT /api/admin/children/restore (bulk restore)
+    if (path === '/api/admin/children/restore' && method === 'PUT') {
+      if (!isAdmin) return err(403, 'admin only')
+      const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
+      const ids = body.ids ?? []
+      if (!ids.length) return json({ restored: 0 })
+      const [result] = await conn.query<ResultSetHeader>(
+        `UPDATE tb_member SET delete_yn = 'N', update_date = NOW()
+         WHERE idx IN (${ph(ids.length)}) AND mtype = 'child' AND instt_code = ? AND delete_yn = 'Y'`,
+        [...ids, user.instt_code]
+      )
+      return json({ restored: result.affectedRows })
+    }
+
+    // GET /api/admin/children/:id
+    const adminChildDetailMatch = path.match(/^\/api\/admin\/children\/(\d+)$/)
+    if (adminChildDetailMatch && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const cid = Number(adminChildDetailMatch[1])
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT c.idx, c.id AS identifier, c.name, c.birth_date, c.is_male_yn,
+                c.regist_date, c.doctor_code, c.teacher_code,
+                d.name AS doctor_name, d.depart_code AS doctor_department,
+                t.name AS therapist_name, t.depart_code AS therapist_department
+         FROM tb_member c
+         LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         WHERE c.idx = ? AND c.instt_code = ? AND c.mtype = 'child' AND c.delete_yn = 'N'`,
+        [cid, user.instt_code]
+      )
+      if (!rows.length) return err(404, 'not found')
+      type DRow = RowDataPacket & { idx: number; identifier: string; name: string; birth_date: unknown; is_male_yn: string | null; regist_date: unknown; doctor_code: string | null; doctor_name: string | null; doctor_department: string | null; teacher_code: string | null; therapist_name: string | null; therapist_department: string | null }
+      const r = rows[0] as DRow
+      return json({
+        id: r.idx, identifier: r.identifier, name: r.name,
+        birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
+        gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+        regist_date: fmtDate(r.regist_date),
+        doctor_code: r.doctor_code, doctor_name: r.doctor_name, doctor_department: r.doctor_department,
+        teacher_code: r.teacher_code, therapist_name: r.therapist_name, therapist_department: r.therapist_department,
+      })
+    }
+
+    // GET /api/admin/children/:id/schedules?year=&month=
+    const adminChildSchedMatch = path.match(/^\/api\/admin\/children\/(\d+)\/schedules$/)
+    if (adminChildSchedMatch && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const cid = Number(adminChildSchedMatch[1])
+      const year = Number(url.searchParams.get('year') ?? new Date().getFullYear())
+      const month = Number(url.searchParams.get('month') ?? new Date().getMonth() + 1)
+      const fromStr = `${year}-${String(month).padStart(2, '0')}-01`
+      const [schedRows] = await conn.query<RowDataPacket[]>(
+        `SELECT s.schedule_id AS id, s.schedule_type,
+                DATE_FORMAT(s.start_date, '%Y-%m-%dT%H:%i:%s') AS start_datetime,
+                DATE_FORMAT(s.end_date,   '%Y-%m-%dT%H:%i:%s') AS end_datetime
+         FROM tb_schedule s
+         JOIN tb_member c ON c.id = s.child_id AND c.idx = ? AND c.instt_code = ?
+         WHERE s.instt_code = ?
+           AND s.start_date >= ?
+           AND s.start_date < DATE_ADD(?, INTERVAL 1 MONTH)
+         ORDER BY s.start_date`,
+        [cid, user.instt_code, user.instt_code, fromStr, fromStr]
+      )
+      return json(schedRows)
+    }
+
+    // PUT /api/admin/children/:id/assign
+    const adminAssignMatch = path.match(/^\/api\/admin\/children\/(\d+)\/assign$/)
+    if (adminAssignMatch && method === 'PUT') {
+      if (!isAdmin) return err(403, 'admin only')
+      const cid = Number(adminAssignMatch[1])
+      const body = (await request.json().catch(() => ({}))) as { doctor_code?: string | null; teacher_code?: string | null }
+      const sets: string[] = ['update_date = NOW()']
+      const args: unknown[] = []
+      if ('doctor_code' in body) { sets.unshift('doctor_code = ?'); args.push(body.doctor_code ?? null) }
+      if ('teacher_code' in body) { sets.unshift('teacher_code = ?'); args.push(body.teacher_code ?? null) }
+      args.push(cid, user.instt_code)
+      await conn.query(
+        `UPDATE tb_member SET ${sets.join(', ')} WHERE idx = ? AND mtype = 'child' AND instt_code = ?`, args
+      )
+      return json({ ok: true })
+    }
+
+    // GET /api/admin/staff?type=doctor|therapist&search=
+    if (path === '/api/admin/staff' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const type = url.searchParams.get('type') ?? ''
+      const search = url.searchParams.get('search') ?? ''
+      const mtype = type === 'doctor' ? 'doctor' : 'healler'
+      const args: unknown[] = [mtype, user.instt_code, 'N']
+      let searchWhere = ''
+      if (search) { searchWhere = ' AND (name LIKE ? OR COALESCE(depart_code,\'\') LIKE ?)'; args.push(`%${search}%`, `%${search}%`) }
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT code, name, depart_code FROM tb_member
+         WHERE mtype = ? AND instt_code = ? AND delete_yn = ? ${searchWhere}
+         ORDER BY name`,
+        args
+      )
+      return json(rows)
+    }
+
+    // GET /api/admin/members?type=doctor|therapist&search=
+    if (path === '/api/admin/members' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const type = url.searchParams.get('type') ?? 'doctor'
+      const search = url.searchParams.get('search') ?? ''
+      const mtype = type === 'doctor' ? 'doctor' : 'healler'
+      const args: unknown[] = [mtype, user.instt_code, 'N']
+      let searchWhere = ''
+      if (search) {
+        searchWhere = ' AND (m.name LIKE ? OR m.code LIKE ? OR COALESCE(m.depart_code,\'\') LIKE ?)'
+        args.push(`%${search}%`, `%${search}%`, `%${search}%`)
+      }
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT m.idx, m.code, m.name, m.depart_code, m.instt_code, m.status_yn,
+                DATEDIFF(NOW(), m.regist_date) <= 30 AS is_new
+         FROM tb_member m
+         WHERE m.mtype = ? AND m.instt_code = ? AND m.delete_yn = ? ${searchWhere}
+         ORDER BY m.name`,
+        args
+      )
+      type MRow = RowDataPacket & { idx: number; code: string; name: string; depart_code: string|null; instt_code: string|null; status_yn: string|null; is_new: number }
+      return json((rows as MRow[]).map(r => ({
+        id: r.idx,
+        code: r.code,
+        name: r.name,
+        depart_code: r.depart_code,
+        instt_code: r.instt_code,
+        status: r.status_yn === 'Y' ? '재직' : '휴직',
+        is_new: Boolean(r.is_new),
+      })))
+    }
+
+    // GET /api/admin/members/:id
+    const adminMemberDetailMatch = path.match(/^\/api\/admin\/members\/(\d+)$/)
+    if (adminMemberDetailMatch && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const mid = Number(adminMemberDetailMatch[1])
+      const [mrows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, code, name, depart_code, instt_code, mtype, status_yn,
+                DATEDIFF(NOW(), regist_date) <= 30 AS is_new
+         FROM tb_member WHERE idx = ? AND instt_code = ? AND delete_yn = 'N'`,
+        [mid, user.instt_code]
+      )
+      if (!mrows.length) return err(404, 'not found')
+      const m = mrows[0] as RowDataPacket & { idx:number; code:string; name:string; depart_code:string|null; instt_code:string|null; mtype:string; status_yn:string|null; is_new:number }
+      let diagDays: string | null = null
+      try {
+        const [drows] = await conn.query<RowDataPacket[]>('SELECT diag_days FROM tb_member WHERE idx = ?', [mid])
+        diagDays = (drows[0] as RowDataPacket & { diag_days: string | null })?.diag_days ?? null
+      } catch { /* diag_days column not yet created */ }
+      const isDoctor = m.mtype === 'doctor'
+      const childWhere = isDoctor ? 'c.doctor_code = ?' : 'c.teacher_code = ?'
+      const [crows] = await conn.query<RowDataPacket[]>(
+        `SELECT c.idx AS id, c.id AS identifier, c.name, c.birth_date, c.is_male_yn, c.regist_date,
+                s_d.start_date AS next_doctor_appointment,
+                s_t.start_date AS next_therapy_appointment,
+                t.name AS therapist_name
+         FROM tb_member c
+         LEFT JOIN (SELECT child_id, MIN(start_date) AS start_date FROM tb_schedule WHERE schedule_type='1' AND start_date > NOW() GROUP BY child_id) s_d ON s_d.child_id = c.id
+         LEFT JOIN (SELECT child_id, MIN(start_date) AS start_date FROM tb_schedule WHERE schedule_type='2' AND start_date > NOW() GROUP BY child_id) s_t ON s_t.child_id = c.id
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler'
+         WHERE c.mtype = 'child' AND c.instt_code = ? AND c.delete_yn = 'N' AND ${childWhere}
+         ORDER BY c.name`,
+        [user.instt_code, m.code]
+      )
+      type CRow = RowDataPacket & { id:number; identifier:string; name:string; birth_date:unknown; is_male_yn:string|null; regist_date:unknown; next_doctor_appointment:unknown; next_therapy_appointment:unknown; therapist_name:string|null }
+      return json({
+        member: {
+          id: m.idx, code: m.code, name: m.name,
+          depart_code: m.depart_code, instt_code: m.instt_code,
+          mtype: m.mtype === 'doctor' ? 'doctor' : 'therapist',
+          status: m.status_yn === 'Y' ? '재직' : '휴직',
+          is_new: Boolean(m.is_new),
+          diag_days: diagDays,
+        },
+        children: (crows as CRow[]).map(r => ({
+          id: r.id, identifier: r.identifier, name: r.name,
+          birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
+          gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          next_doctor_appointment: fmtDate(r.next_doctor_appointment),
+          next_therapy_appointment: fmtDate(r.next_therapy_appointment),
+          therapist_name: r.therapist_name,
+          regist_date: fmtDate(r.regist_date),
+        })),
+      })
+    }
+
+    // PUT /api/admin/members/:id  (requires: ALTER TABLE tb_member ADD COLUMN diag_days VARCHAR(50) NULL DEFAULT NULL)
+    const adminMemberUpdateMatch = path.match(/^\/api\/admin\/members\/(\d+)$/)
+    if (adminMemberUpdateMatch && method === 'PUT') {
+      if (!isAdmin) return err(403, 'admin only')
+      const mid = Number(adminMemberUpdateMatch[1])
+      const body = await request.json() as { name?: string; depart_code?: string | null; status?: '재직' | '휴직'; diag_days?: string | null }
+      const sets: string[] = []
+      const args: unknown[] = []
+      if (body.name !== undefined) { sets.push('name = ?'); args.push(body.name.trim()) }
+      if ('depart_code' in body) { sets.push('depart_code = ?'); args.push(body.depart_code || null) }
+      if (body.status !== undefined) { sets.push('status_yn = ?'); args.push(body.status === '재직' ? 'Y' : 'N') }
+      if (sets.length > 0) {
+        sets.push('update_date = NOW()')
+        await conn.query(`UPDATE tb_member SET ${sets.join(', ')} WHERE idx = ? AND instt_code = ? AND delete_yn = 'N'`, [...args, mid, user.instt_code])
+      }
+      if ('diag_days' in body) {
+        try {
+          await conn.query('UPDATE tb_member SET diag_days = ? WHERE idx = ? AND instt_code = ?', [body.diag_days || null, mid, user.instt_code])
+        } catch { /* diag_days column not yet created */ }
+      }
+      return json({ ok: true })
+    }
+
+    // GET /api/admin/deleted-members
+    if (path === '/api/admin/deleted-members' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, code, name, depart_code, instt_code, mtype, status_yn, update_date AS deleted_at
+         FROM tb_member
+         WHERE mtype IN ('doctor', 'healler') AND instt_code = ? AND delete_yn = 'Y'
+         ORDER BY update_date DESC`,
+        [user.instt_code]
+      )
+      type DMRow = RowDataPacket & { idx: number; code: string; name: string; depart_code: string | null; instt_code: string | null; mtype: string; status_yn: string | null; deleted_at: unknown }
+      return json((rows as DMRow[]).map(r => ({
+        id: r.idx, code: r.code, name: r.name,
+        depart_code: r.depart_code, instt_code: r.instt_code,
+        mtype: r.mtype === 'doctor' ? 'doctor' : 'therapist',
+        status: r.status_yn === 'Y' ? '재직' : '휴직',
+        deleted_at: fmtDate(r.deleted_at),
+      })))
+    }
+
+    // GET /api/admin/deleted-children
+    if (path === '/api/admin/deleted-children' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, id AS identifier, name, birth_date, is_male_yn, update_date AS deleted_at
+         FROM tb_member
+         WHERE mtype = 'child' AND instt_code = ? AND delete_yn = 'Y'
+         ORDER BY update_date DESC`,
+        [user.instt_code]
+      )
+      type DRow = RowDataPacket & { idx: number; identifier: string; name: string; birth_date: unknown; is_male_yn: string | null; deleted_at: unknown }
+      return json((rows as DRow[]).map(r => ({
+        id: r.idx, identifier: r.identifier, name: r.name,
+        birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
+        gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+        regist_date: null, is_new: false,
+        doctor_code: null, doctor_name: null, teacher_code: null, therapist_name: null,
+        deleted_at: fmtDate(r.deleted_at),
+      })))
+    }
+
+    // GET /api/admin/child-history?status=active|dormant|all&search=
+    if (path === '/api/admin/child-history' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const status = url.searchParams.get('status') ?? 'all'
+      const search = url.searchParams.get('search') ?? ''
+      const args: unknown[] = ['child', user.instt_code, 'N']
+      let statusWhere = ''
+      if (status === 'active')  { statusWhere = " AND c.status_yn = 'Y'" }
+      if (status === 'dormant') { statusWhere = " AND c.status_yn = 'N'" }
+      let searchWhere = ''
+      if (search) { searchWhere = ' AND (c.name LIKE ? OR c.id LIKE ?)'; args.push(`%${search}%`, `%${search}%`) }
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT c.idx, c.id AS identifier, c.name, c.birth_date, c.is_male_yn,
+                c.regist_date, c.doctor_code, c.teacher_code,
+                d.name AS doctor_name, t.name AS therapist_name,
+                (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+                 FROM tb_schedule s
+                 WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
+                 ORDER BY s.start_date LIMIT 1) AS next_doctor_appointment,
+                (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+                 FROM tb_schedule s
+                 WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
+                 ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
+         FROM tb_member c
+         LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         WHERE c.mtype = ? AND c.instt_code = ? AND c.delete_yn = ? ${statusWhere}${searchWhere}
+         ORDER BY c.regist_date DESC, c.idx DESC`,
+        args
+      )
+      type HRow = RowDataPacket & { idx: number; identifier: string; name: string; birth_date: unknown; is_male_yn: string | null; regist_date: unknown; doctor_code: string | null; teacher_code: string | null; doctor_name: string | null; therapist_name: string | null; next_doctor_appointment: string | null; next_therapy_appointment: string | null }
+      const nowMs = Date.now()
+      const NEW_MS = 7 * 24 * 3600 * 1000
+      return json((rows as HRow[]).map(r => {
+        const rd = r.regist_date instanceof Date ? r.regist_date : r.regist_date ? new Date(r.regist_date as string) : null
+        return {
+          id: r.idx, identifier: r.identifier, name: r.name,
+          birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
+          gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          regist_date: rd ? rd.toISOString().slice(0, 16).replace('T', ' ') : null,
+          is_new: rd ? (nowMs - rd.getTime()) < NEW_MS : false,
+          doctor_code: r.doctor_code, doctor_name: r.doctor_name,
+          teacher_code: r.teacher_code, therapist_name: r.therapist_name,
+          next_doctor_appointment: r.next_doctor_appointment,
+          next_therapy_appointment: r.next_therapy_appointment,
+        }
+      }))
+    }
+
+    // GET /api/admin/dashboard
+    if (path === '/api/admin/dashboard' && method === 'GET') {
+      if (!isAdmin) return err(403, 'admin only')
+      const inst = user.instt_code
+
+      const [[statsRows]] = await conn.query<RowDataPacket[]>(
+        `SELECT
+           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' THEN 1 ELSE 0 END) AS doc_total,
+           SUM(CASE WHEN mtype='healler' AND delete_yn='N' THEN 1 ELSE 0 END) AS th_total,
+           SUM(CASE WHEN mtype='child'   AND delete_yn='N' THEN 1 ELSE 0 END) AS ch_total,
+           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS doc_this,
+           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS doc_last,
+           SUM(CASE WHEN mtype='healler' AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS th_this,
+           SUM(CASE WHEN mtype='healler' AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS th_last,
+           SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS ch_this,
+           SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS ch_last
+         FROM tb_member WHERE instt_code = ?`,
+        [inst]
+      )
+      type SR = { doc_total:number; th_total:number; ch_total:number; doc_this:number; doc_last:number; th_this:number; th_last:number; ch_this:number; ch_last:number }
+      const s = statsRows as unknown as SR
+
+      const [[docRows], [thRows], [cRows]] = await Promise.all([
+        conn.query<RowDataPacket[]>(
+          `SELECT idx, code, name, depart_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
+           FROM tb_member WHERE mtype='doctor' AND instt_code=? AND delete_yn='N'
+           ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
+        conn.query<RowDataPacket[]>(
+          `SELECT idx, code, name, depart_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
+           FROM tb_member WHERE mtype='healler' AND instt_code=? AND delete_yn='N'
+           ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
+        conn.query<RowDataPacket[]>(
+          `SELECT idx, id AS identifier, name, doctor_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
+           FROM tb_member WHERE mtype='child' AND instt_code=? AND delete_yn='N'
+           ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
+      ])
+
+      return json({
+        stats: {
+          doctors:    { total: Number(s.doc_total)||0, delta: (Number(s.doc_this)||0)-(Number(s.doc_last)||0), new_count: Number(s.doc_this)||0 },
+          therapists: { total: Number(s.th_total)||0,  delta: (Number(s.th_this)||0)-(Number(s.th_last)||0),  new_count: Number(s.th_this)||0 },
+          children:   { total: Number(s.ch_total)||0,  delta: (Number(s.ch_this)||0)-(Number(s.ch_last)||0),  new_count: Number(s.ch_this)||0 },
+        },
+        new_doctors:    (docRows as RowDataPacket[]).map(r => ({ id: r.idx, code: r.code, name: r.name, depart_code: r.depart_code ?? null, regist_date: r.regist_date ?? null })),
+        new_therapists: (thRows  as RowDataPacket[]).map(r => ({ id: r.idx, code: r.code, name: r.name, depart_code: r.depart_code ?? null, regist_date: r.regist_date ?? null })),
+        new_children:   (cRows   as RowDataPacket[]).map(r => ({ id: r.idx, identifier: r.identifier, name: r.name, regist_date: r.regist_date ?? null, has_doctor: Boolean(r.doctor_code) })),
+      })
+    }
+
+    // GET /api/support
+    if (path === '/api/support' && method === 'GET') {
+      const dateFrom = url.searchParams.get('from') ?? ''
+      const dateTo   = url.searchParams.get('to')   ?? ''
+
+      let where = `WHERE idx = ? AND delete_yn = 'N'`
+      const args: unknown[] = [user.idx]
+      if (dateFrom && dateTo) {
+        where += ' AND regist_date >= ? AND regist_date <= DATE_ADD(?, INTERVAL 1 DAY)'
+        args.push(dateFrom, dateTo)
+      }
+
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT cs_idx, s_title, s_type,
+                DATE_FORMAT(regist_date, '%Y.%m.%d') AS regist_date,
+                reply_yn,
+                DATE_FORMAT(reply_date, '%Y.%m.%d') AS reply_date
+         FROM tb_support ${where}
+         ORDER BY cs_idx DESC`,
+        args
+      )
+      return json({ items: rows })
+    }
+
+    // POST /api/support
+    if (path === '/api/support' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as {
+        email?: string; s_type?: string; s_title?: string; memo?: string
+        files?: { name: string; size: number }[]
+      }
+      const s_title = (body.s_title ?? '').trim()
+      const memo    = (body.memo    ?? '').trim()
+      if (!s_title || !memo) return err(400, '제목과 내용을 입력해주세요.')
+
+      const [result] = await conn.query<ResultSetHeader>(
+        `INSERT INTO tb_support
+           (idx, s_title, memo, code, s_type, email, name, status, reply_yn, delete_yn, regist_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, '01', 'N', 'N', NOW())`,
+        [user.idx, s_title, memo, user.instt_code,
+         body.s_type ?? '01', body.email ?? '', user.name]
+      )
+      const csIdx = result.insertId
+
+      const files = body.files ?? []
+      for (const f of files) {
+        await conn.query(
+          `INSERT INTO tb_support_file (cs_idx, file_nm, file_size, source_file_nm, reply_yn, reg_date)
+           VALUES (?, '', ?, ?, 'N', NOW())`,
+          [csIdx, f.size, f.name]
+        )
+      }
+
+      return json({ id: csIdx })
+    }
+
+    // GET|DELETE /api/support/:id
+    const supportIdMatch = path.match(/^\/api\/support\/(\d+)$/)
+    if (supportIdMatch) {
+      const sid = Number(supportIdMatch[1])
+
+      if (method === 'GET') {
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT cs_idx, s_title, memo, s_type, email, name,
+                  DATE_FORMAT(regist_date, '%Y.%m.%d') AS regist_date,
+                  reply_yn, reply_memo,
+                  DATE_FORMAT(reply_date, '%Y.%m.%d') AS reply_date
+           FROM tb_support
+           WHERE cs_idx = ? AND idx = ? AND delete_yn = 'N'
+           LIMIT 1`,
+          [sid, user.idx]
+        )
+        if (!rows[0]) return err(404, 'not found')
+
+        const [fileRows] = await conn.query<RowDataPacket[]>(
+          `SELECT sf_idx, file_nm, source_file_nm, file_size, reply_yn
+           FROM tb_support_file WHERE cs_idx = ? ORDER BY sf_idx`,
+          [sid]
+        )
+        type SFile = RowDataPacket & { sf_idx: number; file_nm: string; source_file_nm: string; file_size: number | null; reply_yn: string }
+        const files = fileRows as SFile[]
+        return json({
+          ...rows[0],
+          question_files: files.filter(f => f.reply_yn === 'N').map(({ sf_idx, file_nm, source_file_nm, file_size }) => ({ sf_idx, file_nm, source_file_nm, file_size })),
+          answer_files:   files.filter(f => f.reply_yn === 'Y').map(({ sf_idx, file_nm, source_file_nm, file_size }) => ({ sf_idx, file_nm, source_file_nm, file_size }))
+        })
+      }
+
+      if (method === 'DELETE') {
+        const [chkRows] = await conn.query<RowDataPacket[]>(
+          `SELECT reply_yn FROM tb_support WHERE cs_idx = ? AND idx = ? AND delete_yn = 'N' LIMIT 1`,
+          [sid, user.idx]
+        )
+        if (!chkRows[0]) return err(404, 'not found')
+        if ((chkRows[0] as { reply_yn: string }).reply_yn === 'Y')
+          return err(400, '이미 답변된 문의는 취소할 수 없습니다.')
+        await conn.query(
+          `UPDATE tb_support SET delete_yn = 'Y' WHERE cs_idx = ? AND idx = ?`,
+          [sid, user.idx]
+        )
+        return json({ ok: true })
+      }
     }
 
     return err(404, `Unknown route: ${method} ${path}`)

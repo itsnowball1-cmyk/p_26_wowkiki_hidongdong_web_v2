@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '../components/Sidebar'
+import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import MiniCalendar from '../components/MiniCalendar'
 import { useRouter } from '../lib/router'
+import { useAuth } from '../lib/auth'
 import { api, type AssignedChild, type ScheduleDetail, type ScheduleItem } from '../lib/api'
 
 // ── 색상 팔레트 (아동별 순환 배정) ────────────────────────────────────────────
@@ -24,6 +26,7 @@ function toDateStr(d: Date): string {
 
 export default function ScheduleList() {
   const { go } = useRouter()
+  const { user } = useAuth()
   const [view, setView] = useState<'주' | '월'>('주')
   const [referenceDate, setReferenceDate] = useState(new Date())
   const [children, setChildren]           = useState<ChildEntry[]>([])
@@ -166,7 +169,7 @@ export default function ScheduleList() {
 
   return (
     <div className="min-h-screen flex bg-surface">
-      <Sidebar />
+      {user?.role === 'admin' ? <AdminSidebar /> : <Sidebar />}
 
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />

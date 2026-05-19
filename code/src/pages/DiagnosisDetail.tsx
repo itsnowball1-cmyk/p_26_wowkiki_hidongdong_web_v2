@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import Sidebar from '../components/Sidebar'
+import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
+import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
 import type { DiagnosisDetailDto } from '../lib/api'
 import { exportDiagnosisToExcel, exportElementToPdf, type DiagnosisExportData } from '../lib/exporters'
@@ -88,9 +90,11 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
   const errorPosition = diagData?.error_position ?? []
   const errorRank = diagData?.error_rank ?? []
 
+  const { user } = useAuth()
+
   return (
     <div className="min-h-screen flex bg-surface">
-      <Sidebar />
+      {user?.role === 'admin' ? <AdminSidebar /> : <Sidebar />}
 
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />

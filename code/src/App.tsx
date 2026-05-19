@@ -8,6 +8,23 @@ import ScheduleList from './pages/ScheduleList'
 import ScheduleNew from './pages/ScheduleNew'
 import ChildCustomList from './pages/ChildCustomList'
 import ChildCustomDetail from './pages/ChildCustomDetail'
+import NoticeList from './pages/NoticeList'
+import NoticeDetail from './pages/NoticeDetail'
+import FaqList from './pages/FaqList'
+import FaqDetail from './pages/FaqDetail'
+import SupportList from './pages/SupportList'
+import SupportNew from './pages/SupportNew'
+import SupportDetail from './pages/SupportDetail'
+import AdminChildList from './pages/AdminChildList'
+import AdminChildDetail from './pages/AdminChildDetail'
+import AdminDeletedChildren from './pages/AdminDeletedChildren'
+import AdminChildHistory from './pages/AdminChildHistory'
+import AdminChildHistoryDetail from './pages/AdminChildHistoryDetail'
+import Dashboard from './pages/Dashboard'
+import AdminDashboard from './pages/AdminDashboard'
+import AdminMemberList from './pages/AdminMemberList'
+import AdminMemberDetail from './pages/AdminMemberDetail'
+import AdminMemberDeletedList from './pages/AdminMemberDeletedList'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 import SignupTermsPage from './pages/SignupTermsPage'
@@ -25,11 +42,13 @@ function Routes() {
     route.name === 'signup-terms' ||
     route.name === 'signup-form'
 
+  const isAdmin = user?.role === 'admin'
+
   useEffect(() => {
     if (!user && !isAuthRoute) {
       go({ name: 'login' })
     } else if (user && isAuthRoute) {
-      go({ name: 'list' })
+      go(isAdmin ? { name: 'admin-dashboard' } : { name: 'dashboard' })
     }
   }, [user, isAuthRoute])
 
@@ -41,17 +60,44 @@ function Routes() {
     return <LoginPage />
   }
 
-  // 인증됨
-  if (isAuthRoute) return <ChildManagement />
+  // 공통 라우트 (모든 역할)
+  if (route.name === 'mypage') return <MyPage />
+  if (route.name === 'schedule-new') return <ScheduleNew />
+  if (route.name === 'schedule-list') return <ScheduleList />
+  if (route.name === 'notice-list') return <NoticeList />
+  if (route.name === 'notice-detail') return <NoticeDetail id={route.id} />
+  if (route.name === 'faq-list') return <FaqList />
+  if (route.name === 'faq-detail') return <FaqDetail id={route.id} />
+  if (route.name === 'support-list') return <SupportList />
+  if (route.name === 'support-new') return <SupportNew />
+  if (route.name === 'support-detail') return <SupportDetail id={route.id} />
+
+  // 어드민 전용 라우트
+  if (isAdmin) {
+    if (route.name === 'admin-dashboard') return <AdminDashboard />
+    if (isAuthRoute || route.name === 'list' || route.name === 'admin-children') return <AdminChildList />
+    if (route.name === 'admin-child-detail') return <AdminChildDetail id={route.id} memberId={route.memberId} />
+    if (route.name === 'admin-deleted-children') return <AdminDeletedChildren />
+    if (route.name === 'admin-child-history') return <AdminChildHistory />
+    if (route.name === 'admin-child-history-detail') return <AdminChildHistoryDetail id={route.id} />
+    if (route.name === 'diagnosis') return <DiagnosisDetail childId={route.childId} diagnosisId={route.diagnosisId} />
+    if (route.name === 'treatment') return <TreatmentDetail childId={route.childId} treatmentId={route.treatmentId} />
+    if (route.name === 'admin-members') return <AdminMemberList />
+    if (route.name === 'admin-member-detail') return <AdminMemberDetail id={route.id} />
+    if (route.name === 'admin-member-deleted') return <AdminMemberDeletedList />
+    return <AdminChildList />
+  }
+
+  // 의사/치료사 라우트
+  if (route.name === 'dashboard') return <Dashboard />
+  if (isAuthRoute) return <Dashboard />
   if (route.name === 'diagnosis') return <DiagnosisDetail childId={route.childId} diagnosisId={route.diagnosisId} />
   if (route.name === 'treatment') return <TreatmentDetail childId={route.childId} treatmentId={route.treatmentId} />
   if (route.name === 'detail') return <ChildDetail id={route.id} />
   if (route.name === 'custom-detail') return <ChildCustomDetail id={route.id} />
   if (route.name === 'custom-list') return <ChildCustomList />
-  if (route.name === 'mypage') return <MyPage />
-  if (route.name === 'schedule-new') return <ScheduleNew />
-  if (route.name === 'schedule-list') return <ScheduleList />
-  return <ChildManagement />
+  if (route.name === 'list') return <ChildManagement />
+  return <Dashboard />
 }
 
 export default function App() {

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '../components/Sidebar'
+import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
+import { useAuth } from '../lib/auth'
 import { api, type TreatmentDetailDto, type RecordingItem } from '../lib/api'
 import {
   exportTreatmentToExcel,
@@ -129,9 +131,11 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
 
   const toggleSeries = (key: SeriesKey) => setVisible(p => ({ ...p, [key]: !p[key] }))
 
+  const { user } = useAuth()
+
   return (
     <div className="min-h-screen flex bg-surface">
-      <Sidebar />
+      {user?.role === 'admin' ? <AdminSidebar /> : <Sidebar />}
 
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />

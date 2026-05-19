@@ -3,7 +3,7 @@ import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
 import { useAuth, roleLabel, type Role } from '../lib/auth'
-import { api, type ChildDetailDto, type DiagnosisListItem, type TreatmentListItem } from '../lib/api'
+import { api, type ChildDetailDto, type DiagnosisListItem, type TreatmentListItem, type StaffItem } from '../lib/api'
 
 type Props = { id: number }
 
@@ -48,8 +48,10 @@ export default function ChildDetail({ id }: Props) {
   const [diagnoses, setDiagnoses] = useState<DiagnosisListItem[]>(FALLBACK_DIAGNOSES)
   const [treatments, setTreatments] = useState<TreatmentListItem[]>(FALLBACK_TREATMENTS)
 
+  const loadDetail = () => api.childDetail(id).then(setDetail).catch(() => {})
+
   useEffect(() => {
-    api.childDetail(id).then(setDetail).catch(() => {})
+    loadDetail()
     api.childDiagnoses(id).then(setDiagnoses).catch(() => {})
     api.childTreatments(id).then(setTreatments).catch(() => {})
   }, [id])
@@ -85,7 +87,7 @@ export default function ChildDetail({ id }: Props) {
           </div>
 
           {/* Info Table */}
-          <InfoCard child={detail.child} />
+          <InfoCard child={detail.child} childId={id} onUpdate={loadDetail} />
 
           {/* Memo Cards */}
           <section>
@@ -127,41 +129,262 @@ export default function ChildDetail({ id }: Props) {
 /* ---------------------------------- */
 /* Info Card                          */
 /* ---------------------------------- */
-function InfoCard({ child }: { child: ChildDetailDto['child'] }) {
-  const doctorLine = child.doctor_name
-    ? `${child.doctor_name} (${child.doctor_id ?? '-'} · ${child.doctor_department ?? '-'})`
-    : '미배정'
-  const therapistLine = child.therapist_name
-    ? `${child.therapist_name} (${child.therapist_id ?? '-'} · ${child.therapist_department ?? '-'})`
-    : '미배정'
+function serviceDurationLabel(startDate: string | null): string | null {
+  if (!startDate) return null
+  const [y, m, d] = startDate.split('.').map(Number)
+  if (!y || !m) return null
+  const start = new Date(y, m - 1, d || 1)
+  const now = new Date()
+  const months = (now.getFullYear() - start.getFullYear()) * 12 + now.getMonth() - start.getMonth()
+  if (months < 1) return '1개월 미만'
+  return `${months}개월 째`
+}
 
-  const rows = [
-    [
-      ['아동명', child.name],
-      ['생년월일', child.birth_date ?? '-'],
-      ['주진단', child.primary_diagnosis ?? '-']
-    ],
-    [
-      ['담당 의사', doctorLine],
-      ['담당 치료사', therapistLine],
-      ['하이동동 시작일', child.service_started_at ?? '-']
-    ]
-  ] as const
+function TableRow({ label, children, last = false }: {
+  label: string
+  children: React.ReactNode
+  last?: boolean
+}) {
+  return (
+    <div className={`flex min-h-[52px] items-stretch ${!last ? 'border-b border-[#DEDEDE]' : ''}`}>
+      <div className="w-[140px] shrink-0 flex items-center px-4 border-r border-[#DEDEDE] bg-[#EAEAEA] text-[15px] font-medium text-[#343A40]">
+        {label}
+      </div>
+      <div className="flex-1 px-5 flex items-center text-[15px]">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function InfoCard({
+  child,
+  childId,
+  onUpdate
+}: {
+  child: ChildDetailDto['child']
+  childId: number
+  onUpdate: () => void
+}) {
+  const { user } = useAuth()
+  const isDoctor = user?.role === 'doctor'
+
+  const [diagInputMode, setDiagInputMode] = useState(false)
+  const [diagValue, setDiagValue] = useState('')
+  const [diagSaving, setDiagSaving] = useState(false)
+  const [showTherapistModal, setShowTherapistModal] = useState(false)
+
+  const saveDiagnosis = async () => {
+    if (!diagValue.trim()) return
+    setDiagSaving(true)
+    try {
+      await api.updatePrimaryDiagnosis(childId, diagValue.trim())
+      setDiagInputMode(false)
+      setDiagValue('')
+      onUpdate()
+    } catch {
+      alert('저장에 실패했습니다.')
+    } finally {
+      setDiagSaving(false)
+    }
+  }
+
+  const durationLabel = serviceDurationLabel(child.service_started_at)
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 rounded-md border border-line bg-surface-card overflow-hidden">
-      {rows.map((col, ci) => (
-        <div key={ci} className={ci === 0 ? 'md:border-r md:border-line' : ''}>
-          {col.map(([label, value]) => (
-            <div key={label} className="grid grid-cols-[140px_1fr] border-b last:border-b-0 border-line">
-              <div className="bg-surface-chip text-ink-850 text-[15px] font-medium px-4 py-4 border-r border-line">
-                {label}
-              </div>
-              <div className="text-ink-600 text-[15px] px-4 py-4">{value}</div>
+    <>
+      <div className="rounded-md border border-[#DEDEDE] bg-white overflow-hidden">
+
+        {/* Row 1: 아동명 */}
+        <TableRow label="아동명">
+          <span className="text-[#585858] font-medium">{child.name}</span>
+          <span className="text-[#484848] ml-8">{child.identifier}</span>
+        </TableRow>
+
+        {/* Row 2: 생년원일 */}
+        <TableRow label="생년원일">
+          <span className="text-[#585858]">{child.birth_date ?? '-'}</span>
+          {child.age_label && (
+            <span className="text-[#585858] ml-8">{child.age_label}</span>
+          )}
+        </TableRow>
+
+        {/* Row 3: 주진단 */}
+        <TableRow label="주진단">
+          {child.primary_diagnosis ? (
+            <span className="text-[#585858]">{child.primary_diagnosis}</span>
+          ) : diagInputMode ? (
+            <div className="flex items-center gap-2 w-full">
+              <input
+                type="text"
+                value={diagValue}
+                onChange={(e) => setDiagValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveDiagnosis() }}
+                placeholder="주진단 입력"
+                autoFocus
+                className="flex-1 h-8 px-2 border border-[#CCCCCC] rounded-[4px] text-[14px] focus:outline-none focus:border-[#005744]"
+              />
+              <button
+                onClick={saveDiagnosis}
+                disabled={diagSaving || !diagValue.trim()}
+                className="h-8 px-3 rounded-[4px] bg-[#005744] text-white text-[13px] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {diagSaving ? '저장 중…' : '저장'}
+              </button>
+              <button
+                onClick={() => { setDiagInputMode(false); setDiagValue('') }}
+                className="h-8 px-3 rounded-[4px] border border-[#CCCCCC] text-[#585858] text-[13px]"
+              >
+                취소
+              </button>
             </div>
-          ))}
+          ) : isDoctor ? (
+            <button
+              onClick={() => setDiagInputMode(true)}
+              className="h-8 px-4 rounded-[4px] border border-[#005744] text-[#005744] text-[13px] font-medium hover:bg-[#005744] hover:text-white transition-colors"
+            >
+              입력하기
+            </button>
+          ) : (
+            <span className="text-[#B0B0B0]">-</span>
+          )}
+        </TableRow>
+
+        {/* Row 4: 담당 의사 */}
+        <TableRow label="담당 의사">
+          {child.doctor_name ? (
+            <div className="flex items-center gap-8 flex-wrap">
+              <span className="text-[#585858]">{child.doctor_name}</span>
+              <span className="text-[#484848]">{child.doctor_id ?? '-'}</span>
+              <span className="text-[#484848]">{child.doctor_department ?? '-'}</span>
+              {child.next_doctor_appointment && (
+                <span className="text-[#484848]">예약&nbsp;&nbsp;&nbsp;{child.next_doctor_appointment}</span>
+              )}
+            </div>
+          ) : (
+            <span className="text-[#585858]">미배정</span>
+          )}
+        </TableRow>
+
+        {/* Row 5: 담당 치료사 */}
+        <TableRow label="담당 치료사">
+          {child.therapist_name ? (
+            <div className="flex items-center gap-8 flex-wrap">
+              <span className="text-[#585858]">{child.therapist_name}</span>
+              <span className="text-[#484848]">{child.therapist_id ?? '-'}</span>
+              <span className="text-[#484848]">{child.therapist_department ?? '-'}</span>
+              {child.therapist_schedule && (
+                <span className="text-[#484848]">{child.therapist_schedule}</span>
+              )}
+            </div>
+          ) : isDoctor ? (
+            <button
+              onClick={() => setShowTherapistModal(true)}
+              className="h-8 px-4 rounded-[4px] border border-[#005744] text-[#005744] text-[13px] font-medium hover:bg-[#005744] hover:text-white transition-colors"
+            >
+              배정하기
+            </button>
+          ) : (
+            <span className="text-[#585858]">미배정</span>
+          )}
+        </TableRow>
+
+        {/* Row 6: 하이동동 시작일 */}
+        <TableRow label="하이동동 시작일" last>
+          <span className="text-[#585858]">{child.service_started_at ?? '-'}</span>
+          {durationLabel && (
+            <span className="text-[#585858] ml-8">{durationLabel}</span>
+          )}
+        </TableRow>
+
+      </div>
+
+      {showTherapistModal && (
+        <AssignTherapistModal
+          childId={childId}
+          onAssigned={() => { setShowTherapistModal(false); onUpdate() }}
+          onClose={() => setShowTherapistModal(false)}
+        />
+      )}
+    </>
+  )
+}
+
+/* ---------------------------------- */
+/* Assign Therapist Modal             */
+/* ---------------------------------- */
+function AssignTherapistModal({
+  childId,
+  onAssigned,
+  onClose
+}: {
+  childId: number
+  onAssigned: () => void
+  onClose: () => void
+}) {
+  const [therapists, setTherapists] = useState<StaffItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [assigning, setAssigning] = useState(false)
+
+  useEffect(() => {
+    api.staff(['therapist'])
+      .then(setTherapists)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleAssign = async (code: string) => {
+    setAssigning(true)
+    try {
+      await api.assignTherapist(childId, code)
+      onAssigned()
+    } catch {
+      alert('배정에 실패했습니다.')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-[8px] w-[400px] max-h-[480px] flex flex-col shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+          <h3 className="text-[16px] font-semibold text-ink-850">담당 치료사 배정</h3>
+          <button onClick={onClose} className="text-ink-400 hover:text-ink-700">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M2 2l14 14M16 2 2 16" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
-      ))}
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <div className="space-y-2">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="h-10 rounded animate-pulse bg-surface-active" />
+              ))}
+            </div>
+          ) : therapists.length === 0 ? (
+            <p className="text-center text-ink-400 py-8">배정 가능한 치료사가 없습니다.</p>
+          ) : (
+            <ul className="space-y-1">
+              {therapists.map((t) => (
+                <li key={t.code}>
+                  <button
+                    onClick={() => handleAssign(t.code)}
+                    disabled={assigning}
+                    className="w-full h-10 px-4 rounded-[5px] text-left text-[14px] text-ink-700 hover:bg-surface-active transition-colors disabled:opacity-50"
+                  >
+                    {t.name} <span className="text-ink-400 text-[12px]">({t.code})</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

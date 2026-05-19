@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import Sidebar from '../components/Sidebar'
+import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import Modal, { ModalCloseButton } from '../components/Modal'
 import { useAuth, roleLabel } from '../lib/auth'
@@ -39,7 +40,7 @@ export default function MyPage() {
 
   return (
     <div className="min-h-screen flex bg-surface">
-      <Sidebar />
+      {user?.role === 'admin' ? <AdminSidebar /> : <Sidebar />}
 
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />

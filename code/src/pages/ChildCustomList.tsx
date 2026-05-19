@@ -4,10 +4,13 @@ import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
 import { api, type CustomListItem } from '../lib/api'
 
+const PAGE_SIZE = 15
+
 export default function ChildCustomList() {
   const { go } = useRouter()
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<CustomListItem[]>([])
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     api.customList().then(setRows).catch(() => {})
@@ -15,13 +18,20 @@ export default function ChildCustomList() {
 
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
+    setPage(1)
     if (!q) return rows
     return rows.filter((r) =>
-      [r.identifier, r.therapist_name, r.current_sound, r.upcoming_sound, r.last_diagnosis]
+      [r.name, r.identifier, r.birth_date, r.gender, r.therapist_name, r.current_sound, r.upcoming_sound, r.last_diagnosis]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     )
   }, [rows, q])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paged = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return filtered.slice(start, start + PAGE_SIZE)
+  }, [filtered, page])
 
   return (
     <div className="min-h-screen flex bg-surface">
@@ -41,11 +51,14 @@ export default function ChildCustomList() {
           </div>
 
           <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
-            <table className="w-full min-w-[900px] text-[15px]">
+            <table className="w-full min-w-[1000px] text-[15px]">
               <thead>
                 <tr className="border-b border-line bg-line-soft">
                   <Th>순번</Th>
+                  <Th>이름(나이)</Th>
                   <Th>식별코드</Th>
+                  <Th>생년월일</Th>
+                  <Th>성별</Th>
                   <Th>담당치료사</Th>
                   <Th>학습 중인 조음</Th>
                   <Th>학습 예정 조음</Th>
@@ -55,18 +68,23 @@ export default function ChildCustomList() {
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="h-[80px] text-center text-ink-400">검색 결과가 없습니다.</td>
+                    <td colSpan={9} className="h-[80px] text-center text-ink-400">검색 결과가 없습니다.</td>
                   </tr>
                 )}
-                {filtered.map((row, i) => (
+                {paged.map((row, i) => (
                   <tr
                     key={row.id}
                     onClick={() => go({ name: 'custom-detail', id: row.id })}
                     className="cursor-pointer hover:bg-surface-active transition-colors"
                   >
-                    <Td className="text-ink-600">{i + 1}</Td>
-                    <Td className="text-ink-700">{row.identifier}</Td>
-                    <Td className="text-ink-600">{row.therapist_name}</Td>
+                    <Td className="text-ink-600">{(page - 1) * PAGE_SIZE + i + 1}</Td>
+                    <Td className="text-ink-700">
+                      {row.name ?? '-'}{row.age_label ? `(${row.age_label})` : ''}
+                    </Td>
+                    <Td className="text-ink-600">{row.identifier}</Td>
+                    <Td className="text-ink-600">{row.birth_date ?? '-'}</Td>
+                    <Td className="text-ink-600">{row.gender ?? '-'}</Td>
+                    <Td className="text-ink-600">{row.therapist_name ?? '-'}</Td>
                     <Td className="text-ink-600">{row.current_sound ?? '-'}</Td>
                     <Td className="text-ink-600">{row.upcoming_sound ?? '-'}</Td>
                     <Td className="text-ink-600">{row.last_diagnosis ?? '-'}</Td>
@@ -76,7 +94,7 @@ export default function ChildCustomList() {
             </table>
           </div>
 
-          <Pagination active={1} />
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </main>
       </div>
     </div>
@@ -109,33 +127,55 @@ function SearchBox({ value, onChange }: { value: string; onChange: (v: string) =
   )
 }
 
-function Pagination({ active, pages = [1] }: { active: number; pages?: number[] }) {
-  if (pages.length <= 1) {
-    return (
-      <div className="flex items-center justify-center gap-2 mt-6">
-        <button className="w-7 h-7 rounded-full text-[14px] font-bold flex items-center justify-center bg-line-soft text-ink-700">
-          {active}
-        </button>
-      </div>
-    )
+function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (p: number) => void }) {
+  const pageNumbers: (number | '...')[] = []
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pageNumbers.push(i)
+  } else {
+    pageNumbers.push(1)
+    if (page > 3) pageNumbers.push('...')
+    const start = Math.max(2, page - 1)
+    const end = Math.min(totalPages - 1, page + 1)
+    for (let i = start; i <= end; i++) pageNumbers.push(i)
+    if (page < totalPages - 2) pageNumbers.push('...')
+    pageNumbers.push(totalPages)
   }
+
+  if (totalPages <= 1) return null
+
   return (
-    <div className="flex items-center justify-center gap-2 mt-6">
-      <button className="w-7 h-7 grid place-items-center text-ink-500" aria-label="prev">
-        <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 1 1 6l5 5" strokeLinecap="round" /></svg>
+    <div className="flex items-center justify-center gap-1 mt-6">
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(1, page - 1))}
+        disabled={page === 1}
+        className="w-8 h-8 flex items-center justify-center rounded-[5px] text-ink-400 hover:bg-surface-active disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M6 1 1 6l5 5" /></svg>
       </button>
-      {pages.map((n) => (
-        <button
-          key={n}
-          className={`w-7 h-7 rounded-full text-[14px] font-bold flex items-center justify-center transition ${
-            n === active ? 'bg-line-soft text-ink-700' : 'text-ink-600 hover:bg-surface-active'
-          }`}
-        >
-          {n}
-        </button>
-      ))}
-      <button className="w-7 h-7 grid place-items-center text-ink-500" aria-label="next">
-        <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="m1 1 5 5-5 5" strokeLinecap="round" /></svg>
+      {pageNumbers.map((n, i) =>
+        n === '...' ? (
+          <span key={`e-${i}`} className="w-8 h-8 flex items-center justify-center text-[14px] text-ink-400">…</span>
+        ) : (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onChange(n)}
+            className={`w-8 h-8 flex items-center justify-center rounded-[5px] text-[14px] font-medium transition-colors ${
+              n === page ? 'bg-brand text-white' : 'text-ink-600 hover:bg-surface-active'
+            }`}
+          >
+            {n}
+          </button>
+        )
+      )}
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(totalPages, page + 1))}
+        disabled={page === totalPages}
+        className="w-8 h-8 flex items-center justify-center rounded-[5px] text-ink-400 hover:bg-surface-active disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m1 1 5 5-5 5" /></svg>
       </button>
     </div>
   )

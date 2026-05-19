@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 type SignupRole = 'admin' | 'doctor' | 'therapist'
 
 type Route =
+  | { name: 'dashboard' }
   | { name: 'list' }
   | { name: 'detail'; id: number }
   | { name: 'diagnosis'; childId: number; diagnosisId: number }
@@ -12,6 +13,22 @@ type Route =
   | { name: 'mypage' }
   | { name: 'schedule-list' }
   | { name: 'schedule-new' }
+  | { name: 'faq-list' }
+  | { name: 'faq-detail'; id: number }
+  | { name: 'notice-list' }
+  | { name: 'notice-detail'; id: number }
+  | { name: 'support-list' }
+  | { name: 'support-new' }
+  | { name: 'support-detail'; id: number }
+  | { name: 'admin-dashboard' }
+  | { name: 'admin-children' }
+  | { name: 'admin-child-detail'; id: number; memberId?: number }
+  | { name: 'admin-deleted-children' }
+  | { name: 'admin-child-history' }
+  | { name: 'admin-child-history-detail'; id: number }
+  | { name: 'admin-member-detail'; id: number }
+  | { name: 'admin-member-deleted' }
+  | { name: 'admin-members' }
   | { name: 'login' }
   | { name: 'signup' }
   | { name: 'signup-terms'; role: SignupRole }
@@ -29,6 +46,31 @@ function isRole(s: string): s is SignupRole {
 }
 
 function parseHash(hash: string): Route {
+  const faqDetail = hash.match(/^#\/faq\/(\d+)/)
+  if (faqDetail) return { name: 'faq-detail', id: Number(faqDetail[1]) }
+  if (hash.startsWith('#/faq')) return { name: 'faq-list' }
+  const noticeDetail = hash.match(/^#\/notice\/(\d+)/)
+  if (noticeDetail) return { name: 'notice-detail', id: Number(noticeDetail[1]) }
+  if (hash.startsWith('#/notice')) return { name: 'notice-list' }
+  if (hash.startsWith('#/support/new')) return { name: 'support-new' }
+  const supportDetail = hash.match(/^#\/support\/(\d+)/)
+  if (supportDetail) return { name: 'support-detail', id: Number(supportDetail[1]) }
+  if (hash.startsWith('#/support')) return { name: 'support-list' }
+  if (hash.startsWith('#/dashboard')) return { name: 'dashboard' }
+  if (hash.startsWith('#/admin/dashboard')) return { name: 'admin-dashboard' }
+  if (hash.startsWith('#/admin/deleted')) return { name: 'admin-deleted-children' }
+  const adminHistoryDetail = hash.match(/^#\/admin\/history\/child\/(\d+)/)
+  if (adminHistoryDetail) return { name: 'admin-child-history-detail', id: Number(adminHistoryDetail[1]) }
+  if (hash.startsWith('#/admin/history')) return { name: 'admin-child-history' }
+  if (hash.startsWith('#/admin/members/deleted')) return { name: 'admin-member-deleted' }
+  const adminMemberDetail = hash.match(/^#\/admin\/members\/(\d+)/)
+  if (adminMemberDetail) return { name: 'admin-member-detail', id: Number(adminMemberDetail[1]) }
+  if (hash.startsWith('#/admin/members')) return { name: 'admin-members' }
+  const adminChildFromMember = hash.match(/^#\/admin\/child\/(\d+)\/from\/(\d+)/)
+  if (adminChildFromMember) return { name: 'admin-child-detail', id: Number(adminChildFromMember[1]), memberId: Number(adminChildFromMember[2]) }
+  const adminChildDetail = hash.match(/^#\/admin\/child\/(\d+)/)
+  if (adminChildDetail) return { name: 'admin-child-detail', id: Number(adminChildDetail[1]) }
+  if (hash.startsWith('#/admin')) return { name: 'admin-children' }
   if (hash.startsWith('#/login')) return { name: 'login' }
   const terms = hash.match(/^#\/signup\/terms\/(admin|doctor|therapist)/)
   if (terms && isRole(terms[1])) return { name: 'signup-terms', role: terms[1] }
@@ -51,6 +93,23 @@ function parseHash(hash: string): Route {
 }
 
 function toHash(route: Route): string {
+  if (route.name === 'faq-detail') return `#/faq/${route.id}`
+  if (route.name === 'faq-list') return '#/faq'
+  if (route.name === 'notice-detail') return `#/notice/${route.id}`
+  if (route.name === 'notice-list') return '#/notice'
+  if (route.name === 'support-new') return '#/support/new'
+  if (route.name === 'support-detail') return `#/support/${route.id}`
+  if (route.name === 'support-list') return '#/support'
+  if (route.name === 'admin-deleted-children') return '#/admin/deleted'
+  if (route.name === 'admin-child-history') return '#/admin/history'
+  if (route.name === 'admin-child-history-detail') return `#/admin/history/child/${route.id}`
+  if (route.name === 'admin-member-deleted') return '#/admin/members/deleted'
+  if (route.name === 'admin-member-detail') return `#/admin/members/${route.id}`
+  if (route.name === 'admin-members') return '#/admin/members'
+  if (route.name === 'admin-child-detail') return route.memberId ? `#/admin/child/${route.id}/from/${route.memberId}` : `#/admin/child/${route.id}`
+  if (route.name === 'dashboard') return '#/dashboard'
+  if (route.name === 'admin-dashboard') return '#/admin/dashboard'
+  if (route.name === 'admin-children') return '#/admin'
   if (route.name === 'login') return '#/login'
   if (route.name === 'signup-terms') return `#/signup/terms/${route.role}`
   if (route.name === 'signup-form') return `#/signup/form/${route.role}`
@@ -76,6 +135,7 @@ export function RouterProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const go = (next: Route) => {
+    setRoute(next)
     window.location.hash = toHash(next)
   }
 

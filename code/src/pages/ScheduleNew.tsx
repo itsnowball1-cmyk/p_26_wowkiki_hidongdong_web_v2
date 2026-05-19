@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '../components/Sidebar'
+import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import MiniCalendar from '../components/MiniCalendar'
 import { useRouter } from '../lib/router'
+import { useAuth } from '../lib/auth'
 import { api, type AssignedChild } from '../lib/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -190,6 +192,7 @@ function buildSummary(date: Date, config: RepeatConfig): string {
 
 export default function ScheduleNew() {
   const { go } = useRouter()
+  const { user } = useAuth()
   const [date, setDate]                   = useState(new Date())
   const [startTime, setStartTime]         = useState('9:00')
   const [endTime, setEndTime]             = useState('9:30')
@@ -273,7 +276,7 @@ export default function ScheduleNew() {
 
   return (
     <div className="min-h-screen flex bg-surface">
-      <Sidebar />
+      {user?.role === 'admin' ? <AdminSidebar /> : <Sidebar />}
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />
         <main className="flex-1 px-6 lg:px-10 py-10 overflow-y-auto">

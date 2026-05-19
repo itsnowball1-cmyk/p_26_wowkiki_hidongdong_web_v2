@@ -2,35 +2,44 @@ import { useState } from 'react'
 import BrandLogo from './BrandLogo'
 import { useRouter } from '../lib/router'
 
-type MenuKey = 'children' | 'schedule' | 'custom' | 'mypage'
+type MenuKey = 'dashboard' | 'children' | 'schedule' | 'custom' | 'mypage'
 
 const items: { key: MenuKey; label: string }[] = [
+  { key: 'dashboard', label: '대시보드' },
   { key: 'children', label: '아동관리' },
   { key: 'schedule', label: '전체 내진 일정' },
   { key: 'custom', label: '아동별 커스텀' },
   { key: 'mypage', label: '마이페이지' },
 ]
 
-const inquiryItems = ['공지사항', 'FAQ', '1:1 문의하기']
-
 export default function Sidebar() {
   const { route, go } = useRouter()
-  const [inquiryOpen, setInquiryOpen] = useState(false)
+
+  const isOnNotice  = route.name === 'notice-list'  || route.name === 'notice-detail'
+  const isOnFaq     = route.name === 'faq-list'     || route.name === 'faq-detail'
+  const isOnSupport = route.name === 'support-list' || route.name === 'support-new' || route.name === 'support-detail'
+  const [inquiryManualOpen, setInquiryManualOpen] = useState(false)
+  const inquiryOpen = isOnNotice || isOnFaq || isOnSupport || inquiryManualOpen
 
   const active: MenuKey =
-    route.name === 'schedule-list' || route.name === 'schedule-new'
+    route.name === 'dashboard'
+      ? 'dashboard'
+      : route.name === 'schedule-list' || route.name === 'schedule-new'
       ? 'schedule'
       : route.name === 'custom-list' || route.name === 'custom-detail'
       ? 'custom'
       : route.name === 'mypage'
       ? 'mypage'
-      : 'children'
+      : route.name === 'list' || route.name === 'detail' || route.name === 'diagnosis' || route.name === 'treatment'
+      ? 'children'
+      : 'dashboard'
 
   const handleClick = (key: MenuKey) => {
-    if (key === 'schedule' && route.name !== 'schedule-list') go({ name: 'schedule-list' })
-    if (key === 'children' && route.name !== 'list') go({ name: 'list' })
-    if (key === 'custom' && route.name !== 'custom-list') go({ name: 'custom-list' })
-    if (key === 'mypage' && route.name !== 'mypage') go({ name: 'mypage' })
+    if (key === 'dashboard') go({ name: 'dashboard' })
+    if (key === 'schedule') go({ name: 'schedule-list' })
+    if (key === 'children') go({ name: 'list' })
+    if (key === 'custom') go({ name: 'custom-list' })
+    if (key === 'mypage') go({ name: 'mypage' })
   }
 
   return (
@@ -70,7 +79,7 @@ export default function Sidebar() {
           <li>
             <button
               type="button"
-              onClick={() => setInquiryOpen(o => !o)}
+              onClick={() => setInquiryManualOpen(o => !o)}
               className="group w-full h-[44px] flex items-center px-[13px] gap-3 rounded-[5px] text-left transition-colors text-ink-300 hover:text-ink-700 hover:bg-surface-active/60"
             >
               <span className="inline-block w-5 h-5 rounded-[3px] bg-[#B4B4B4] group-hover:bg-brand" aria-hidden />
@@ -85,18 +94,48 @@ export default function Sidebar() {
 
             {inquiryOpen && (
               <ul className="mt-1 space-y-0.5 pl-[13px]">
-                {inquiryItems.map((label) => (
-                  <li key={label}>
-                    <button
-                      type="button"
-                      disabled
-                      className="w-full h-[40px] flex items-center gap-3 px-[13px] rounded-[5px] text-left text-ink-300 cursor-not-allowed"
-                    >
-                      <span className="inline-block w-5 h-5 rounded-[3px] bg-[#B4B4B4]" aria-hidden />
-                      <span className="text-[15px] font-medium">{label}</span>
-                    </button>
-                  </li>
-                ))}
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => go({ name: 'notice-list' })}
+                    className={`w-full h-[40px] flex items-center gap-3 px-[13px] rounded-[5px] text-left transition-colors ${
+                      isOnNotice
+                        ? 'bg-surface-active text-ink-850'
+                        : 'text-ink-500 hover:text-ink-700 hover:bg-surface-active/60'
+                    }`}
+                  >
+                    <span className={`inline-block w-5 h-5 rounded-[3px] ${isOnNotice ? 'bg-brand' : 'bg-[#B4B4B4]'}`} aria-hidden />
+                    <span className="text-[15px] font-medium">공지사항</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => go({ name: 'faq-list' })}
+                    className={`w-full h-[40px] flex items-center gap-3 px-[13px] rounded-[5px] text-left transition-colors ${
+                      isOnFaq
+                        ? 'bg-surface-active text-ink-850'
+                        : 'text-ink-500 hover:text-ink-700 hover:bg-surface-active/60'
+                    }`}
+                  >
+                    <span className={`inline-block w-5 h-5 rounded-[3px] ${isOnFaq ? 'bg-brand' : 'bg-[#B4B4B4]'}`} aria-hidden />
+                    <span className="text-[15px] font-medium">FAQ</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => go({ name: 'support-list' })}
+                    className={`w-full h-[40px] flex items-center gap-3 px-[13px] rounded-[5px] text-left transition-colors ${
+                      isOnSupport
+                        ? 'bg-surface-active text-ink-850'
+                        : 'text-ink-500 hover:text-ink-700 hover:bg-surface-active/60'
+                    }`}
+                  >
+                    <span className={`inline-block w-5 h-5 rounded-[3px] ${isOnSupport ? 'bg-brand' : 'bg-[#B4B4B4]'}`} aria-hidden />
+                    <span className="text-[15px] font-medium">1:1 문의하기</span>
+                  </button>
+                </li>
               </ul>
             )}
           </li>

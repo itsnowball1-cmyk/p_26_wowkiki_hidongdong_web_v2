@@ -13,6 +13,10 @@ export type AssignedChild = {
   id: number
   identifier: string
   child_name: string | null
+  birth_date: string | null
+  age_label: string | null
+  gender: string | null
+  app_login_id: string | null
   doctor_code: string | null
   teacher_code: string | null
   doctor_name: string | null
@@ -123,7 +127,11 @@ export type TreatmentDetailDto = {
 export type CustomListItem = {
   id: number
   identifier: string
-  therapist_name: string
+  name: string | null
+  birth_date: string | null
+  age_label: string | null
+  gender: string | null
+  therapist_name: string | null
   current_sound: string | null
   upcoming_sound: string | null
   last_diagnosis: string | null
@@ -152,6 +160,214 @@ export type DiagnosisDetailDto = {
   error_position: { phoneme: string; types: string; positions: string }[]
   error_rank: { rank: number; type: string; ratio: string }[]
   stimulability: unknown[]
+}
+
+export type FaqListItem = {
+  BOARD_KEY: number
+  BOARD_TITLE: string
+  GUBUN: string
+}
+
+export type FaqImage = {
+  BF_IDX: number
+  ATTACH_NM: string
+  FILE_NM: string
+}
+
+export type FaqDetailDto = {
+  BOARD_KEY: number
+  BOARD_TITLE: string
+  BOARD_CONTENT: string | null
+  REPLY_MEMO: string | null
+  GUBUN: string
+  question_images: FaqImage[]
+  answer_images: FaqImage[]
+}
+
+export type NoticeListItem = {
+  BOARD_KEY: number
+  GUBUN: string
+  BOARD_FIXED: string
+  BOARD_TITLE: string
+  reg_date: string
+  BOARD_READ_COUNT: number
+}
+
+export type NoticeListDto = {
+  total: number
+  categories: string[]
+  items: NoticeListItem[]
+}
+
+export type NoticeAttachment = {
+  BF_IDX: number
+  FILE_NM: string
+  ATTACH_TYPE: string
+  FILE_SIZE: number | null
+}
+
+export type NoticeDetailDto = {
+  BOARD_KEY: number
+  GUBUN: string
+  BOARD_FIXED: string
+  BOARD_TITLE: string
+  BOARD_CONTENT: string | null
+  reg_date: string
+  BOARD_READ_COUNT: number
+  attachments: NoticeAttachment[]
+}
+
+export type AdminChild = {
+  id: number
+  identifier: string
+  name: string
+  birth_date: string | null
+  age_label: string | null
+  gender: string
+  regist_date: string | null
+  is_new: boolean
+  doctor_code: string | null
+  doctor_name: string | null
+  teacher_code: string | null
+  therapist_name: string | null
+  deleted_at?: string | null
+}
+
+export type AdminStaffItem = {
+  code: string
+  name: string
+  depart_code: string | null
+}
+
+export type AdminChildHistory = AdminChild & {
+  next_doctor_appointment: string | null
+  next_therapy_appointment: string | null
+}
+
+export type AdminChildDetail = {
+  id: number
+  identifier: string
+  name: string
+  birth_date: string | null
+  age_label: string | null
+  gender: string
+  regist_date: string | null
+  doctor_code: string | null
+  doctor_name: string | null
+  doctor_department: string | null
+  teacher_code: string | null
+  therapist_name: string | null
+  therapist_department: string | null
+}
+
+export type AdminChildSchedule = {
+  id: number
+  schedule_type: string
+  start_datetime: string
+  end_datetime: string
+}
+
+export type AdminMember = {
+  id: number
+  code: string
+  name: string
+  depart_code: string | null
+  instt_code: string | null
+  status: '재직' | '휴직'
+  is_new: boolean
+  diag_days: string | null
+}
+
+export type AdminMemberChild = {
+  id: number
+  identifier: string
+  name: string
+  age_label: string | null
+  birth_date: string | null
+  gender: string
+  next_doctor_appointment: string | null
+  therapist_name: string | null
+  next_therapy_appointment: string | null
+  regist_date: string | null
+}
+
+export type AdminDeletedMember = {
+  id: number
+  code: string
+  name: string
+  depart_code: string | null
+  instt_code: string | null
+  mtype: 'doctor' | 'therapist'
+  status: '재직' | '휴직'
+  deleted_at: string | null
+}
+
+export type AdminMemberDetailDto = {
+  member: AdminMember & { mtype: 'doctor' | 'therapist' }
+  children: AdminMemberChild[]
+}
+
+export type DashboardDto = {
+  stats: {
+    total_children: number
+    total_delta: number
+    trained_today: number
+    trained_today_delta: number
+    avg_accuracy: number | null
+    no_custom: number
+  }
+  children: {
+    id: number
+    identifier: string
+    name: string
+    birth_date: string | null
+    age_label: string | null
+    today_accuracy: number | null
+    current_sound: string | null
+    days_since_trained: number | null
+  }[]
+}
+
+export type AdminDashboardDto = {
+  stats: {
+    doctors:    { total: number; delta: number; new_count: number }
+    therapists: { total: number; delta: number; new_count: number }
+    children:   { total: number; delta: number; new_count: number }
+  }
+  new_doctors:    { id: number; code: string; name: string; depart_code: string | null; regist_date: string | null }[]
+  new_therapists: { id: number; code: string; name: string; depart_code: string | null; regist_date: string | null }[]
+  new_children:   { id: number; identifier: string; name: string; regist_date: string | null; has_doctor: boolean }[]
+}
+
+export type SupportFile = {
+  sf_idx: number
+  file_nm: string
+  source_file_nm: string
+  file_size: number | null
+}
+
+export type SupportListItem = {
+  cs_idx: number
+  s_title: string
+  s_type: string
+  regist_date: string
+  reply_yn: string
+  reply_date: string | null
+}
+
+export type SupportDetailDto = {
+  cs_idx: number
+  s_title: string
+  memo: string
+  s_type: string
+  email: string
+  name: string
+  regist_date: string
+  reply_yn: string
+  reply_memo: string | null
+  reply_date: string | null
+  question_files: SupportFile[]
+  answer_files: SupportFile[]
 }
 
 const BASE = '/api'
@@ -193,6 +409,16 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ content })
     }),
+  updatePrimaryDiagnosis: (id: number, primary_diagnosis: string) =>
+    apiFetch<{ ok: boolean }>(`/children/${id}/primary-diagnosis`, {
+      method: 'PUT',
+      body: JSON.stringify({ primary_diagnosis })
+    }),
+  assignTherapist: (id: number, therapist_code: string) =>
+    apiFetch<{ ok: boolean }>(`/children/${id}/assign-therapist`, {
+      method: 'PUT',
+      body: JSON.stringify({ therapist_code })
+    }),
   customList: () => apiFetch<CustomListItem[]>('/children/custom-list'),
   customDetail: (id: number) => apiFetch<CustomDetailDto>(`/children/${id}/custom`),
   diagnosis: (id: number) => apiFetch<DiagnosisDetailDto>(`/diagnoses/${id}`),
@@ -209,5 +435,52 @@ export const api = {
   deleteSchedule: (id: number) =>
     apiFetch<{ ok: boolean }>(`/schedules/${id}`, { method: 'DELETE' }),
   treatmentDetail: (id: number) => apiFetch<TreatmentDetailDto>(`/treatments/${id}`),
-  treatmentRecordings: (id: number) => apiFetch<RecordingItem[]>(`/treatments/${id}/recordings`)
+  treatmentRecordings: (id: number) => apiFetch<RecordingItem[]>(`/treatments/${id}/recordings`),
+  notices: (page: number, gubun: string, search: string) =>
+    apiFetch<NoticeListDto>(`/notices?page=${page}&gubun=${encodeURIComponent(gubun)}&search=${encodeURIComponent(search)}`),
+  noticeDetail: (id: number) => apiFetch<NoticeDetailDto>(`/notices/${id}`),
+  recordNoticeView: (id: number) => apiFetch<{ ok: boolean }>(`/notices/${id}/view`, { method: 'POST' }),
+  faqList: (gubun: string, search: string) =>
+    apiFetch<{ items: FaqListItem[] }>(`/faq?gubun=${encodeURIComponent(gubun)}&search=${encodeURIComponent(search)}`),
+  faqDetail: (id: number) => apiFetch<FaqDetailDto>(`/faq/${id}`),
+  adminChildren: (search: string) =>
+    apiFetch<AdminChild[]>(`/admin/children?search=${encodeURIComponent(search)}`),
+  adminDeleteChildren: (ids: number[]) =>
+    apiFetch<{ deleted: number }>('/admin/children', { method: 'DELETE', body: JSON.stringify({ ids }) }),
+  adminAssignChild: (childId: number, body: { doctor_code?: string | null; teacher_code?: string | null }) =>
+    apiFetch<{ ok: boolean }>(`/admin/children/${childId}/assign`, { method: 'PUT', body: JSON.stringify(body) }),
+  adminStaff: (type: 'doctor' | 'therapist', search: string) =>
+    apiFetch<AdminStaffItem[]>(`/admin/staff?type=${type}&search=${encodeURIComponent(search)}`),
+  adminChildDetail: (id: number) =>
+    apiFetch<AdminChildDetail>(`/admin/children/${id}`),
+  adminChildSchedules: (id: number, year: number, month: number) =>
+    apiFetch<AdminChildSchedule[]>(`/admin/children/${id}/schedules?year=${year}&month=${month}`),
+  adminMembers: (type: 'doctor' | 'therapist', search: string) =>
+    apiFetch<AdminMember[]>(`/admin/members?type=${type}&search=${encodeURIComponent(search)}`),
+  adminMemberDetail: (id: number) =>
+    apiFetch<AdminMemberDetailDto>(`/admin/members/${id}`),
+  adminUpdateMember: (id: number, body: { name?: string; depart_code?: string | null; status?: '재직' | '휴직'; diag_days?: string | null }) =>
+    apiFetch<{ ok: boolean }>(`/admin/members/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  adminDeletedChildren: () =>
+    apiFetch<AdminChild[]>('/admin/deleted-children'),
+  adminRestoreChildren: (ids: number[]) =>
+    apiFetch<{ restored: number }>('/admin/children/restore', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  adminDeleteMembers: (ids: number[]) =>
+    apiFetch<{ deleted: number }>('/admin/members', { method: 'DELETE', body: JSON.stringify({ ids }) }),
+  adminDeletedMembers: () =>
+    apiFetch<AdminDeletedMember[]>('/admin/deleted-members'),
+  adminRestoreMembers: (ids: number[]) =>
+    apiFetch<{ restored: number }>('/admin/members/restore', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  dashboard: () =>
+    apiFetch<DashboardDto>('/dashboard'),
+  adminDashboard: () =>
+    apiFetch<AdminDashboardDto>('/admin/dashboard'),
+  adminChildHistory: (status: 'active' | 'dormant' | 'all', search: string) =>
+    apiFetch<AdminChildHistory[]>(`/admin/child-history?status=${status}&search=${encodeURIComponent(search)}`),
+  supportList: (from: string, to: string) =>
+    apiFetch<{ items: SupportListItem[] }>(`/support?from=${from}&to=${to}`),
+  supportCreate: (body: { email: string; s_type: string; s_title: string; memo: string; files?: { name: string; size: number }[] }) =>
+    apiFetch<{ id: number }>('/support', { method: 'POST', body: JSON.stringify(body) }),
+  supportDetail: (id: number) => apiFetch<SupportDetailDto>(`/support/${id}`),
+  supportCancel: (id: number) => apiFetch<{ ok: boolean }>(`/support/${id}`, { method: 'DELETE' }),
 }
