@@ -60,7 +60,7 @@ export default function AdminChildHistoryDetail({ id }: Props) {
       <AdminSidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />
-        <main className="flex-1 px-6 lg:px-10 py-8 space-y-10 max-w-[1640px]">
+        <main className="flex-1 px-6 lg:px-10 py-8 space-y-10">
 
           {/* 헤더 */}
           <div className="flex items-center justify-between">

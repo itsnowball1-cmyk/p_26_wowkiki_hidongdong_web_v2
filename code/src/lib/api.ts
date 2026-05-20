@@ -140,6 +140,9 @@ export type CustomListItem = {
 export type CustomDetailDto = {
   id: number
   identifier: string
+  name: string | null
+  age_label: string | null
+  gender: string | null
   therapist_name: string | null
   doctor_name: string | null
   schedule: string[]

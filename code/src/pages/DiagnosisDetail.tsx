@@ -99,7 +99,7 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />
 
-        <main className="flex-1 px-6 lg:px-10 py-8 space-y-6 max-w-[1280px]">
+        <main className="flex-1 px-6 lg:px-10 py-8 space-y-6">
           {/* Header */}
           <div className="flex items-start justify-between">
             <h1 className="text-[22px] font-bold text-ink-800">검사 결과</h1>

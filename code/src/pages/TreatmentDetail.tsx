@@ -140,7 +140,7 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />
 
-        <main className="flex-1 px-6 lg:px-10 py-8 space-y-8 max-w-[1640px]">
+        <main className="flex-1 px-6 lg:px-10 py-8 space-y-8">
           {/* Header */}
           <div className="flex items-start justify-between">
             <div className="flex items-baseline gap-4">

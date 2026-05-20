@@ -89,7 +89,7 @@ function parseHash(hash: string): Route {
   if (treat) return { name: 'treatment', childId: Number(treat[1]), treatmentId: Number(treat[2]) }
   const m = hash.match(/^#\/child\/(\d+)/)
   if (m) return { name: 'detail', id: Number(m[1]) }
-  return { name: 'list' }
+  return { name: 'login' }
 }
 
 function toHash(route: Route): string {

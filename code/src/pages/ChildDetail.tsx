@@ -73,7 +73,7 @@ export default function ChildDetail({ id }: Props) {
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar />
 
-        <main className="flex-1 px-6 lg:px-10 py-8 space-y-12 max-w-[1640px]">
+        <main className="flex-1 px-6 lg:px-10 py-8 space-y-12">
           {/* Header */}
           <div className="flex items-center justify-between">
             <h2 className="text-[18px] font-semibold text-ink-900">아동 정보</h2>
@@ -96,19 +96,19 @@ export default function ChildDetail({ id }: Props) {
                 childId={id}
                 role="admin"
                 initial={memoByType.admin?.content ?? ''}
-                lastEdited={memoByType.admin?.updated_at ?? '-'}
+                lastEdited={memoByType.admin?.content ? (memoByType.admin.updated_at ?? '-') : '-'}
               />
               <MemoCard
                 childId={id}
                 role="doctor"
                 initial={memoByType.doctor?.content ?? ''}
-                lastEdited={memoByType.doctor?.updated_at ?? '-'}
+                lastEdited={memoByType.doctor?.content ? (memoByType.doctor.updated_at ?? '-') : '-'}
               />
               <MemoCard
                 childId={id}
                 role="therapist"
                 initial={memoByType.therapist?.content ?? ''}
-                lastEdited={memoByType.therapist?.updated_at ?? '-'}
+                lastEdited={memoByType.therapist?.content ? (memoByType.therapist.updated_at ?? '-') : '-'}
               />
             </div>
           </section>

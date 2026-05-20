@@ -33,7 +33,7 @@ export default function BrandLogo({ size = 'sm', as = 'button' }: { size?: Size;
   return (
     <button
       type="button"
-      onClick={() => go(user?.role === 'admin' ? { name: 'admin-dashboard' } : user ? { name: 'list' } : { name: 'login' })}
+      onClick={() => go(user?.role === 'admin' ? { name: 'admin-dashboard' } : user ? { name: 'dashboard' } : { name: 'login' })}
       className="inline-block focus:outline-none hover:opacity-80 transition-opacity"
       aria-label="하이동동 홈"
     >

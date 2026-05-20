@@ -732,6 +732,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const [childRows] = await conn.query<RowDataPacket[]>(
         `SELECT
            c.idx AS id, c.id AS child_member_id,
+           c.name, c.birth_date, c.is_male_yn,
            t.name AS therapist_name,
            d.name AS doctor_name
          FROM tb_member c
@@ -742,7 +743,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         [cid, user.instt_code]
       )
       if (!childRows[0]) return err(404, 'not found')
-      const child = childRows[0] as { id: number; child_member_id: string; therapist_name: string | null; doctor_name: string | null }
+      const child = childRows[0] as { id: number; child_member_id: string; name: string | null; birth_date: unknown; is_male_yn: string | null; therapist_name: string | null; doctor_name: string | null }
 
       const [trainRows] = await conn.query<RowDataPacket[]>(
         `SELECT idx, act_date, analysislog
@@ -795,6 +796,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       return json({
         id:             child.id,
         identifier:     child.child_member_id,
+        name:           child.name ?? null,
+        age_label:      ageLabel(child.birth_date),
+        gender:         child.is_male_yn === 'Y' ? '남아' : child.is_male_yn === 'N' ? '여아' : null,
         therapist_name: child.therapist_name,
         doctor_name:    child.doctor_name,
         schedule,
@@ -855,7 +859,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const child = childRows[0] as ChildR | undefined
       if (!child) return err(404, 'not found')
 
-      const updatedAt = fmtDate(child.update_date) ?? new Date().toISOString().slice(0, 10).replace(/-/g, '.')
+      const updatedAt = fmtDate(child.update_date) ?? '-'
       const { admin_memo, doctor_memo, teacher_memo, update_date, birth_date, service_started_at, ...rest } = child
 
       return json({

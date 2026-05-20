@@ -43,7 +43,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="hidden md:flex md:w-[240px] lg:w-[240px] shrink-0 flex-col bg-surface-card shadow-sidebar">
+    <aside className="hidden md:flex md:w-[240px] lg:w-[240px] shrink-0 flex-col bg-surface-card shadow-sidebar sticky top-0 h-screen overflow-y-auto">
       <div className="h-[64px] flex items-center px-5">
         <BrandLogo size="sm" />
       </div>

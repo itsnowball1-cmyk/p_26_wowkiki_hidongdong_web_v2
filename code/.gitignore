@@ -4,3 +4,6 @@ dist
 .dev.vars
 *.log
 .DS_Store
+*.tsbuildinfo
+figma_exports/
+tmp/
