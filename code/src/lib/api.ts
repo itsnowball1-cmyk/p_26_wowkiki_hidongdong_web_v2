@@ -2,6 +2,7 @@ import type { Role } from './auth'
 
 export type CurrentUserDto = {
   id: string
+  code: string | null
   name: string
   role: Role
   institutionCode: string

@@ -241,8 +241,8 @@ export default function ScheduleNew() {
       const base = {
         child_idx:     selectedChild.id,
         schedule_type: scheduleType,
-        doctor_code:   selectedChild.doctor_code  ?? undefined,
-        teacher_code:  selectedChild.teacher_code ?? undefined
+        doctor_code:   user?.role === 'doctor'    ? (user.code ?? user.id) : (selectedChild.doctor_code  ?? undefined),
+        teacher_code:  user?.role === 'therapist' ? (user.code ?? user.id) : (selectedChild.teacher_code ?? undefined)
       }
       if (recurrence === 'once') {
         await api.createSchedule({
@@ -380,12 +380,12 @@ export default function ScheduleNew() {
 
               {/* 담당의사 */}
               <FormRow label="담당의사">
-                <StaticField value={selectedChild?.doctor_name ?? null} />
+                <StaticField value={user?.role === 'doctor' ? user.name : (selectedChild?.doctor_name ?? null)} />
               </FormRow>
 
               {/* 담당치료사 */}
               <FormRow label="담당치료사">
-                <StaticField value={selectedChild?.therapist_name ?? null} />
+                <StaticField value={user?.role === 'therapist' ? user.name : (selectedChild?.therapist_name ?? null)} />
               </FormRow>
 
               {/* 주기 */}
@@ -715,7 +715,7 @@ function PopupRow({ label, children }: { label: string; children: React.ReactNod
 
 function StaticField({ value }: { value: string | null }) {
   return (
-    <div className="h-10 px-3 flex items-center text-[15px] border border-line rounded-[5px] bg-surface">
+    <div className="h-10 flex items-center text-[15px]">
       {value ? <span className="text-ink-900">{value}</span> : <span className="text-ink-400">-</span>}
     </div>
   )

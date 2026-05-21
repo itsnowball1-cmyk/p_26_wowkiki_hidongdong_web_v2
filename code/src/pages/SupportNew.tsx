@@ -72,7 +72,7 @@ export default function SupportNew() {
         <main className="flex-1 px-6 lg:px-10 py-8">
           <h1 className="text-[22px] font-bold mb-6">1:1 문의하기</h1>
 
-          <div className="max-w-3xl border border-line rounded-[5px] bg-white overflow-hidden">
+          <div className="w-full border border-line rounded-[5px] bg-white overflow-hidden">
             <table className="w-full text-[14px]">
               <tbody>
                 <FormRow label="아이디">

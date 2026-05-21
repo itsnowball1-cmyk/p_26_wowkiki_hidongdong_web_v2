@@ -53,7 +53,7 @@ export default function SupportDetail({ id }: { id: number }) {
           <h1 className="text-[22px] font-bold mb-6">1:1 문의하기</h1>
 
           {loading && (
-            <div className="max-w-3xl space-y-3">
+            <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="h-12 rounded animate-pulse bg-line" />
               ))}
@@ -67,7 +67,7 @@ export default function SupportDetail({ id }: { id: number }) {
           {!loading && support && (
             <>
               {/* 문의 내용 */}
-              <div className="max-w-3xl border border-line rounded-[5px] bg-white overflow-hidden">
+              <div className="w-full border border-line rounded-[5px] bg-white overflow-hidden">
                 <table className="w-full text-[14px]">
                   <tbody>
                     {/* 이름 + 문의유형 (2열) */}
@@ -103,7 +103,7 @@ export default function SupportDetail({ id }: { id: number }) {
 
               {/* 답변 내용 (answered) */}
               {support.reply_yn === 'Y' && (
-                <div className="max-w-3xl mt-4 border border-line rounded-[5px] bg-white overflow-hidden">
+                <div className="w-full mt-4 border border-line rounded-[5px] bg-white overflow-hidden">
                   <div className="px-4 py-3 bg-surface border-b border-line">
                     <span className="text-[15px] font-semibold text-ink-800">와우키키 답변 내용</span>
                   </div>

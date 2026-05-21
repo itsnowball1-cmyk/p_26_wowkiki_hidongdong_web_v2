@@ -5,6 +5,7 @@ export type Role = 'admin' | 'doctor' | 'therapist'
 
 export type CurrentUser = {
   id: string
+  code?: string | null
   name: string
   role: Role
   institutionCode: string
@@ -56,12 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (
             prev &&
             prev.id === dto.id &&
+            prev.code === dto.code &&
             prev.name === dto.name &&
             prev.role === dto.role &&
             prev.institutionCode === dto.institutionCode
           ) return prev  // 변경 없으면 리렌더링 방지
           const updated: CurrentUser = {
-            id: dto.id, name: dto.name, role: dto.role,
+            id: dto.id, code: dto.code, name: dto.name, role: dto.role,
             institutionCode: dto.institutionCode,
             department: dto.department, schedule: dto.schedule
           }
@@ -81,11 +83,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       if (res.ok) {
         const dto = (await res.json()) as {
-          id: string; name: string; role: Role
+          id: string; code: string | null; name: string; role: Role
           institutionCode: string; department: string | null; schedule: string | null
         }
         const u: CurrentUser = {
-          id: dto.id, name: dto.name, role: dto.role,
+          id: dto.id, code: dto.code, name: dto.name, role: dto.role,
           institutionCode: dto.institutionCode,
           department: dto.department, schedule: dto.schedule
         }

@@ -57,6 +57,7 @@ function parseHash(hash: string): Route {
   if (supportDetail) return { name: 'support-detail', id: Number(supportDetail[1]) }
   if (hash.startsWith('#/support')) return { name: 'support-list' }
   if (hash.startsWith('#/dashboard')) return { name: 'dashboard' }
+  if (hash.startsWith('#/list')) return { name: 'list' }
   if (hash.startsWith('#/admin/dashboard')) return { name: 'admin-dashboard' }
   if (hash.startsWith('#/admin/deleted')) return { name: 'admin-deleted-children' }
   const adminHistoryDetail = hash.match(/^#\/admin\/history\/child\/(\d+)/)
@@ -107,6 +108,7 @@ function toHash(route: Route): string {
   if (route.name === 'admin-member-detail') return `#/admin/members/${route.id}`
   if (route.name === 'admin-members') return '#/admin/members'
   if (route.name === 'admin-child-detail') return route.memberId ? `#/admin/child/${route.id}/from/${route.memberId}` : `#/admin/child/${route.id}`
+  if (route.name === 'list') return '#/list'
   if (route.name === 'dashboard') return '#/dashboard'
   if (route.name === 'admin-dashboard') return '#/admin/dashboard'
   if (route.name === 'admin-children') return '#/admin'

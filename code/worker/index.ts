@@ -10,6 +10,9 @@ type Env = {
   DB_PASSWORD: string
   DB_DATABASE: string
   FILES_BASE_URL: string
+  ALIGO_KEY: string
+  ALIGO_USER_ID: string
+  ALIGO_SENDER: string
 }
 
 // ─── 역할 매핑 ───────────────────────────────────────────────────────────────
@@ -61,6 +64,7 @@ type StaffRow = RowDataPacket & {
   name: string
   instt_code: string
   depart_code: string | null
+  approval_status?: string | null
 }
 
 const TEXT_FIELD_TYPES = new Set(['VAR_STRING', 'STRING', 'BLOB', 'TINY_BLOB', 'MEDIUM_BLOB', 'LONG_BLOB'])
@@ -337,7 +341,7 @@ async function handleLogin(request: Request, conn: Connection): Promise<Response
 
   const mtypes = roleToMtypes(role)
   const [rows] = await conn.query<StaffRow[]>(
-    `SELECT idx, id, code, mtype, pw, name, instt_code, depart_code
+    `SELECT idx, id, code, mtype, pw, name, instt_code, depart_code, approval_status
      FROM tb_member
      WHERE id = ? AND mtype IN (${ph(mtypes.length)}) AND delete_yn = 'N'
      LIMIT 1`,
@@ -345,9 +349,13 @@ async function handleLogin(request: Request, conn: Connection): Promise<Response
   )
   const row = rows[0]
   if (!row || row.pw !== pw) return err(401, LOGIN_FAIL_MSG)
+  if (row.approval_status === '승인대기') {
+    return err(403, '회원가입 승인 대기 중입니다.\n관리자의 승인 후 로그인하실 수 있습니다.')
+  }
 
   return json({
     id:              row.id,
+    code:            row.code ?? null,
     name:            row.name,
     role:            mtypeToRole(row.mtype),
     institutionCode: row.instt_code,
@@ -382,10 +390,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const body = (await request.json().catch(() => ({}))) as {
         role?: string; id?: string; pw?: string; name?: string
         phone?: string; email?: string; instt_code?: string; depart_code?: string
+        license_file_nm?: string; license_file_data?: string
       }
-      const { role, id, pw, name, phone, email, instt_code, depart_code } = body
+      const VALID_INSTITUTION_CODES = new Set(['HBD', 'HIC', 'HAS', 'TEST'])
+      const { role, id, pw, name, phone, email, depart_code, license_file_nm, license_file_data } = body
+      const instt_code = (body.instt_code ?? '').trim().toUpperCase()
       if (!role || !id || !pw || !name || !instt_code) return err(400, '필수 항목이 누락되었습니다.')
       if (role !== 'doctor' && role !== 'therapist') return err(400, '유효하지 않은 역할입니다.')
+      if (!VALID_INSTITUTION_CODES.has(instt_code)) return err(400, '유효하지 않은 기관코드입니다.')
 
       // 아이디 중복 확인
       const [existRows] = await conn.query<RowDataPacket[]>(
@@ -408,12 +420,95 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       }
       const code = `${instt_code}_${prefix}_${String(seq).padStart(3, '0')}`
 
-      await conn.query(
-        `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, depart_code, delete_yn, regist_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', NOW())`,
-        [id, pw, code, mtype, name, phone ?? null, email ?? null, instt_code, depart_code ?? null]
+      const [insertResult] = await conn.query<ResultSetHeader>(
+        `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, depart_code, approval_status, license_file_nm, delete_yn, regist_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '승인대기', ?, 'N', NOW())`,
+        [id, pw, code, mtype, name, phone ?? null, email ?? null, instt_code, depart_code ?? null, license_file_nm ?? null]
       )
+      if (license_file_nm && license_file_data) {
+        await conn.query(
+          `INSERT INTO tb_license_file (member_idx, source_file_nm, file_data) VALUES (?, ?, ?)`,
+          [insertResult.insertId, license_file_nm, license_file_data]
+        )
+      }
       return json({ ok: true, code })
+    }
+
+    // POST /api/auth/send-sms
+    if (path === '/api/auth/send-sms' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { phone?: string }
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      if (!phone || phone.length < 10) return err(400, '올바른 전화번호를 입력해주세요.')
+
+      const code = String(Math.floor(100000 + Math.random() * 900000))
+      const expiresAt = new Date(Date.now() + 3 * 60 * 1000)
+        .toISOString().slice(0, 19).replace('T', ' ')
+
+      await conn.query(
+        `DELETE FROM sms_verification WHERE phone = ?`, [phone]
+      )
+      await conn.query(
+        `INSERT INTO sms_verification (phone, code, expires_at) VALUES (?, ?, ?)`,
+        [phone, code, expiresAt]
+      )
+
+      const form = new URLSearchParams({
+        key:     env.ALIGO_KEY,
+        user_id: env.ALIGO_USER_ID,
+        sender:  env.ALIGO_SENDER,
+        receiver: phone,
+        msg:     `[하이동동] 인증번호 [${code}]를 입력해주세요. (3분 이내 유효)`
+      })
+      const smsRes = await fetch('https://apis.aligo.in/send/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form.toString()
+      })
+      const smsData = await smsRes.json() as { result_code?: string; message?: string }
+      if (smsData.result_code !== '1') {
+        return err(500, smsData.message ?? 'SMS 발송에 실패했습니다.')
+      }
+      return json({ ok: true })
+    }
+
+    // POST /api/auth/verify-sms
+    if (path === '/api/auth/verify-sms' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { phone?: string; code?: string }
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      const code  = (body.code ?? '').trim()
+      if (!phone || !code) return err(400, '전화번호와 인증번호를 입력해주세요.')
+
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT id, code, expires_at, verified FROM sms_verification
+         WHERE phone = ? ORDER BY id DESC LIMIT 1`,
+        [phone]
+      )
+      const row = rows[0] as { id: number; code: string; expires_at: Date; verified: number } | undefined
+      if (!row) return err(400, '인증번호를 먼저 요청해주세요.')
+      if (row.verified) return err(400, '이미 사용된 인증번호입니다.')
+      if (new Date(row.expires_at) < new Date()) return err(400, '인증번호가 만료되었습니다. 다시 요청해주세요.')
+      if (row.code !== code) return err(400, '인증번호가 일치하지 않습니다.')
+
+      await conn.query(`UPDATE sms_verification SET verified = 1 WHERE id = ?`, [row.id])
+      return json({ ok: true })
+    }
+
+    // GET /api/auth/check-institution?code=xxx
+    if (path === '/api/auth/check-institution' && method === 'GET') {
+      const VALID_INSTITUTION_CODES = new Set(['HBD', 'HIC', 'HAS', 'TEST'])
+      const code = (url.searchParams.get('code') ?? '').trim().toUpperCase()
+      if (!code) return err(400, 'code required')
+      return json({ valid: VALID_INSTITUTION_CODES.has(code) })
+    }
+
+    // GET /api/auth/check-id?id=xxx
+    if (path === '/api/auth/check-id' && method === 'GET') {
+      const id = url.searchParams.get('id') ?? ''
+      if (!id.trim()) return err(400, 'id required')
+      const [rows] = await conn.query<RowDataPacket[]>(
+        'SELECT idx FROM tb_member WHERE id = ? LIMIT 1', [id.trim()]
+      )
+      return json({ available: (rows as RowDataPacket[]).length === 0 })
     }
 
     // MariaDB 연결 확인용 — 전환 완료 후 제거
@@ -431,6 +526,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     if (path === '/api/me' && method === 'GET') {
       return json({
         id:              user.id,
+        code:            user.code ?? null,
         name:            user.name,
         role:            mtypeToRole(user.mtype),
         institutionCode: user.instt_code,
@@ -1049,9 +1145,17 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       let codeWhere = ''
       const args: unknown[] = [user.instt_code, from, to]
       if (user.mtype === 'doctor') {
-        codeWhere = 'AND s.doctor_code = ?'; args.push(staffCode)
+        codeWhere = staffCode !== user.id
+          ? 'AND (s.doctor_code = ? OR s.doctor_code = ?)'
+          : 'AND s.doctor_code = ?'
+        args.push(staffCode)
+        if (staffCode !== user.id) args.push(user.id)
       } else if (user.mtype === 'healler') {
-        codeWhere = 'AND s.teacher_code = ?'; args.push(staffCode)
+        codeWhere = staffCode !== user.id
+          ? 'AND (s.teacher_code = ? OR s.teacher_code = ?)'
+          : 'AND s.teacher_code = ?'
+        args.push(staffCode)
+        if (staffCode !== user.id) args.push(user.id)
       }
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT s.schedule_id AS id,
