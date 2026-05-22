@@ -34,7 +34,7 @@ type IdStatus = 'idle' | 'checking' | 'available' | 'taken' | 'error'
 type InsttStatus = 'idle' | 'checking' | 'valid' | 'invalid' | 'error'
 
 function validatePassword(pw: string): { valid: boolean; lengthOk: boolean; comboOk: boolean } {
-  const lengthOk = pw.length >= 10 && pw.length <= 16
+  const lengthOk = pw.length >= 8 && pw.length <= 16
   const categories = [
     /[A-Z]/.test(pw),
     /[a-z]/.test(pw),
@@ -109,7 +109,7 @@ export default function SignupFormPage({ role }: Props) {
 
   const handleSendSms = async () => {
     const phone = form.phone.replace(/\D/g, '')
-    if (!phone || phone.length < 10) return setPhoneError('올바른 전화번호를 입력해주세요.')
+    if (!phone || phone.length < 10) return setPhoneError('휴대전화를 올바르게 입력해주세요.')
     setPhoneSending(true)
     setPhoneError('')
     try {
@@ -221,45 +221,77 @@ export default function SignupFormPage({ role }: Props) {
 
   const insttStatusMsg =
     insttStatus === 'valid'   ? '확인된 기관코드입니다.' :
-    insttStatus === 'invalid' ? '등록되지 않은 기관코드입니다.' :
-    insttStatus === 'error'   ? '확인 중 오류가 발생했습니다. 다시 시도해주세요.' : ''
+    insttStatus === 'invalid' ? '소속 병원 코드를 올바르게 입력해주세요.' :
+    insttStatus === 'error'   ? '소속 병원 코드를 올바르게 입력해주세요.' : ''
   const insttStatusColor =
     insttStatus === 'valid' ? 'text-brand' :
     (insttStatus === 'invalid' || insttStatus === 'error') ? 'text-brand-danger' : ''
 
   const idStatusMsg =
     idStatus === 'available' ? '사용 가능한 아이디입니다.' :
-    idStatus === 'taken'     ? '이미 사용 중인 아이디입니다.' :
-    idStatus === 'error'     ? '확인 중 오류가 발생했습니다. 다시 시도해주세요.' : ''
+    idStatus === 'taken'     ? '이미 사용 중인 아이디 입니다.' :
+    idStatus === 'error'     ? '이미 사용 중인 아이디 입니다.' : ''
   const idStatusColor =
     idStatus === 'available' ? 'text-brand' :
     (idStatus === 'taken' || idStatus === 'error') ? 'text-brand-danger' : ''
 
   if (submitted) {
+    const isDoctor = role === 'doctor'
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center px-6">
-        <div className="max-w-[480px] w-full text-center">
-          <div className="mb-10">
+      <div className="min-h-screen bg-white flex flex-col px-6 py-10">
+        <div className="w-full max-w-[960px] mx-auto">
+          <div className="mb-8">
             <BrandLogo size="md" />
           </div>
-          <div className="w-20 h-20 rounded-full bg-brand/10 flex items-center justify-center mx-auto mb-6">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <path d="M8 18l7 7 13-13" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-brand" style={{ stroke: 'var(--color-brand, #4F72DF)' }} />
+          <div className="mb-14">
+            <Stepper current={3} />
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center text-center">
+          {/* 체크 아이콘 */}
+          <div className="w-[120px] h-[120px] mb-8">
+            <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
+              <circle cx="60" cy="60" r="58" stroke="#005744" strokeWidth="4" fill="white" />
+              <path d="M34 60l18 18 34-34" stroke="#005744" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-          <h2 className="text-[24px] font-bold text-ink-850 mb-3">심사 중입니다</h2>
-          <p className="text-[15px] text-ink-500 leading-relaxed">
-            회원가입 신청이 완료되었습니다.<br />
-            관리자가 제출하신 내용을 검토 중입니다.<br />
-            승인 후 로그인하실 수 있습니다.
-          </p>
-          <button
-            type="button"
-            onClick={() => go({ name: 'login' })}
-            className="mt-10 w-[200px] h-[52px] rounded-[10px] text-[15px] font-semibold bg-brand text-white hover:opacity-90 transition"
-          >
-            로그인 페이지로
-          </button>
+
+          {isDoctor ? (
+            <>
+              <h2 className="text-[35px] font-bold text-black mb-3 leading-[50px]">
+                의사 회원가입 완료
+              </h2>
+              <p className="text-[15px] text-[#141414]">
+                {form.name} 님의 회원가입이 성공적으로 완료 되었습니다.
+              </p>
+              <button
+                type="button"
+                onClick={() => go({ name: 'login' })}
+                className="mt-10 w-[420px] h-[58px] rounded-[10px] text-[18px] font-semibold bg-[#005744] text-white hover:opacity-90 transition"
+              >
+                로그인 바로가기
+              </button>
+            </>
+          ) : (
+            <>
+              <h2 className="text-[35px] font-bold leading-[50px] mb-6">
+                <span className="text-black">치료사 회원가입 완료</span><br />
+                <span className="text-[#005744]">하이동동 관리자 승인 후 서비스를 이용하실 수 있습니다.</span>
+              </h2>
+              <div className="w-[460px] rounded-[10px] bg-[#EAF3EA] px-8 py-6 text-[16px] text-[#141414] leading-[24px] text-center">
+                등록하신 휴대폰번호로 승인 완료 알림을 보내드릴 예정입니다.<br />
+                승인은 영업일 기준 1~2일정도 소요될 수 있습니다.
+              </div>
+              <button
+                type="button"
+                onClick={() => go({ name: 'login' })}
+                className="mt-10 w-[158px] h-[58px] rounded-[10px] text-[18px] font-semibold bg-[#005744] text-white hover:opacity-90 transition"
+              >
+                확인
+              </button>
+            </>
+          )}
         </div>
       </div>
     )
@@ -315,13 +347,13 @@ export default function SignupFormPage({ role }: Props) {
               />
               {form.password.length > 0 && (
                 <div className="mt-2 space-y-1">
-                  <RuleRow pass={pwValidation.lengthOk} text="10자~16자" />
-                  <RuleRow pass={pwValidation.comboOk}  text="영문 대소문자/숫자/특수문자 중 2가지 이상 조합" />
+                  <RuleRow pass={pwValidation.lengthOk} text="8~16자" />
+                  <RuleRow pass={pwValidation.comboOk}  text="영문/숫자/특수문자 2가지 이상 조합" />
                 </div>
               )}
               {form.password.length === 0 && (
                 <div className="mt-1 text-[12px] text-ink-400">
-                  영문 대소문자/숫자/특수문자 중 2가지 이상 조합, 10자~16자
+                  8~16자의 영문/숫자/특수문자 2가지 이상으로 조합해주세요.
                 </div>
               )}
             </div>
@@ -338,7 +370,7 @@ export default function SignupFormPage({ role }: Props) {
               />
               {form.passwordConfirm.length > 0 && (
                 <div className={`mt-1 text-[12px] ${passwordMatch ? 'text-brand' : 'text-brand-danger'}`}>
-                  {passwordMatch ? '비밀번호가 일치합니다.' : '비밀번호가 일치하지 않습니다.'}
+                  {passwordMatch ? '비밀번호가 일치합니다.' : '새 비밀번호가 일치하지 않습니다.'}
                 </div>
               )}
             </div>
@@ -468,58 +500,16 @@ export default function SignupFormPage({ role }: Props) {
             <div className="mt-12" />
             <SectionHeader title="치료사 면허증 첨부" />
             <FormTable>
-              <FormRow label="면허증" last>
-                <div className="space-y-2">
-                  <div className="flex items-start gap-3">
-                    <button
-                      type="button"
-                      onClick={() => licenseInputRef.current?.click()}
-                      className="h-[42px] px-4 flex items-center border border-line rounded-[7px] text-[13px] text-ink-600 hover:bg-surface-active cursor-pointer transition-colors shrink-0"
-                    >
-                      내PC
-                    </button>
-                    <input
-                      ref={licenseInputRef}
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={e => setLicenseFile(e.target.files?.[0] ?? null)}
-                    />
-                    <div
-                      onDragOver={e => { e.preventDefault(); setLicenseDragging(true) }}
-                      onDragLeave={() => setLicenseDragging(false)}
-                      onDrop={e => {
-                        e.preventDefault()
-                        setLicenseDragging(false)
-                        setLicenseFile(e.dataTransfer.files[0] ?? null)
-                      }}
-                      onClick={() => licenseInputRef.current?.click()}
-                      className={`flex-1 min-h-[64px] border border-dashed rounded-[7px] flex items-center justify-center text-[13px] transition-colors cursor-pointer ${
-                        licenseDragging ? 'border-brand bg-brand/5 text-brand' : 'border-[#B1B1B1] text-ink-400'
-                      }`}
-                    >
-                      파일을 마우스로 끌어 오세요.
-                    </div>
-                  </div>
-                  {licenseFile && (
-                    <div className="flex items-center gap-2 text-[13px] text-ink-600">
-                      <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                        <path d="M2 2h5l3 3v6H2z" /><path d="M7 2v3h3" />
-                      </svg>
-                      <span className="flex-1 truncate">{licenseFile.name}</span>
-                      <span className="text-ink-300 shrink-0">({(licenseFile.size / 1024).toFixed(1)} KB)</span>
-                      <button
-                        type="button"
-                        onClick={() => setLicenseFile(null)}
-                        className="text-ink-300 hover:text-red-400 transition-colors shrink-0"
-                        aria-label="삭제"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                          <path d="M3 3l8 8M11 3l-8 8" />
-                        </svg>
-                      </button>
-                    </div>
-                  )}
+              <FormRow label="치료사 자격 확인 파일" last>
+                <div>
+                  <FileDropRow
+                    file={licenseFile}
+                    dragging={licenseDragging}
+                    inputRef={licenseInputRef}
+                    onFile={setLicenseFile}
+                    onDragging={setLicenseDragging}
+                  />
+                  <p className="mt-1 text-[12px] text-ink-400">* 치료사 자격을 증명할 수 있는 파일을 첨부해주세요.</p>
                 </div>
               </FormRow>
             </FormTable>
@@ -620,6 +610,71 @@ function Input({
         className="w-full h-[42px] px-3 border border-[#B1B1B1] rounded-[7px] text-[15px] placeholder:text-[#C0C0C0] focus:outline-none focus:border-brand"
       />
       {error && <div className="mt-1 text-[12px] text-brand-danger">{error}</div>}
+    </div>
+  )
+}
+
+function FileDropRow({
+  file,
+  dragging,
+  inputRef,
+  onFile,
+  onDragging,
+}: {
+  file: File | null
+  dragging: boolean
+  inputRef: React.RefObject<HTMLInputElement>
+  onFile: (f: File | null) => void
+  onDragging: (v: boolean) => void
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="h-[42px] px-4 flex items-center border border-line rounded-[7px] text-[13px] text-ink-600 hover:bg-surface-active cursor-pointer transition-colors shrink-0"
+        >
+          내PC
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*,.pdf"
+          className="hidden"
+          onChange={e => onFile(e.target.files?.[0] ?? null)}
+        />
+        <div
+          onDragOver={e => { e.preventDefault(); onDragging(true) }}
+          onDragLeave={() => onDragging(false)}
+          onDrop={e => { e.preventDefault(); onDragging(false); onFile(e.dataTransfer.files[0] ?? null) }}
+          onClick={() => inputRef.current?.click()}
+          className={`flex-1 min-h-[64px] border border-dashed rounded-[7px] flex items-center justify-center text-[13px] transition-colors cursor-pointer ${
+            dragging ? 'border-brand bg-brand/5 text-brand' : 'border-[#B1B1B1] text-ink-400'
+          }`}
+        >
+          파일을 마우스로 끌어 오세요.
+        </div>
+      </div>
+      {file && (
+        <div className="flex items-center gap-2 text-[13px] text-ink-600">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <path d="M2 2h5l3 3v6H2z" /><path d="M7 2v3h3" />
+          </svg>
+          <span className="flex-1 truncate">{file.name}</span>
+          <span className="text-ink-300 shrink-0">({(file.size / 1024).toFixed(1)} KB)</span>
+          <button
+            type="button"
+            onClick={() => onFile(null)}
+            className="text-ink-300 hover:text-red-400 transition-colors shrink-0"
+            aria-label="삭제"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M3 3l8 8M11 3l-8 8" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }

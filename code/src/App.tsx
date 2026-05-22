@@ -29,6 +29,9 @@ import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 import SignupTermsPage from './pages/SignupTermsPage'
 import SignupFormPage from './pages/SignupFormPage'
+import AdminSignupFormPage from './pages/AdminSignupFormPage'
+import SignupRejectedPage from './pages/SignupRejectedPage'
+import SignupSupplementPage from './pages/SignupSupplementPage'
 import { RouterProvider, useRouter } from './lib/router'
 import { AuthProvider, useAuth } from './lib/auth'
 
@@ -40,7 +43,9 @@ function Routes() {
     route.name === 'login' ||
     route.name === 'signup' ||
     route.name === 'signup-terms' ||
-    route.name === 'signup-form'
+    route.name === 'signup-form' ||
+    route.name === 'signup-rejected' ||
+    route.name === 'signup-supplement'
 
   const isAdmin = user?.role === 'admin'
 
@@ -56,7 +61,12 @@ function Routes() {
   if (!user) {
     if (route.name === 'signup') return <SignupPage />
     if (route.name === 'signup-terms') return <SignupTermsPage role={route.role} />
-    if (route.name === 'signup-form') return <SignupFormPage role={route.role} />
+    if (route.name === 'signup-form') {
+      if (route.role === 'admin') return <AdminSignupFormPage />
+      return <SignupFormPage role={route.role} />
+    }
+    if (route.name === 'signup-rejected') return <SignupRejectedPage />
+    if (route.name === 'signup-supplement') return <SignupSupplementPage />
     return <LoginPage />
   }
 

@@ -46,6 +46,15 @@ function fmtDate(d: unknown): string | null {
   return dt.toISOString().slice(0, 10).replace(/-/g, '.')
 }
 
+function fmtDateTime(d: unknown): string | null {
+  if (!d) return null
+  const dt = d instanceof Date ? d : new Date(d as string)
+  if (isNaN(dt.getTime())) return null
+  const date = dt.toISOString().slice(0, 10).replace(/-/g, '.')
+  const time = dt.toISOString().slice(11, 16)
+  return `${date} ${time}`
+}
+
 function ageLabel(birthDate: unknown): string | null {
   if (!birthDate) return null
   const bd = birthDate instanceof Date ? birthDate : new Date(birthDate as string)
@@ -352,6 +361,9 @@ async function handleLogin(request: Request, conn: Connection): Promise<Response
   if (row.approval_status === '승인대기') {
     return err(403, '회원가입 승인 대기 중입니다.\n관리자의 승인 후 로그인하실 수 있습니다.')
   }
+  if (row.approval_status === '반려') {
+    return json({ error: '반려', id: row.id, name: row.name, instt_code: row.instt_code }, { status: 403 })
+  }
 
   return json({
     id:              row.id,
@@ -420,10 +432,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       }
       const code = `${instt_code}_${prefix}_${String(seq).padStart(3, '0')}`
 
+      const approvalStatus = role === 'therapist' ? '승인대기' : null
       const [insertResult] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, depart_code, approval_status, license_file_nm, delete_yn, regist_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '승인대기', ?, 'N', NOW())`,
-        [id, pw, code, mtype, name, phone ?? null, email ?? null, instt_code, depart_code ?? null, license_file_nm ?? null]
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', NOW())`,
+        [id, pw, code, mtype, name, phone ?? null, email ?? null, instt_code, depart_code ?? null, approvalStatus, license_file_nm ?? null]
       )
       if (license_file_nm && license_file_data) {
         await conn.query(
@@ -432,6 +445,112 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         )
       }
       return json({ ok: true, code })
+    }
+
+    // POST /api/auth/signup-admin — 기관 관리자 회원가입
+    // 사전 DB 준비 필요:
+    // CREATE TABLE IF NOT EXISTS tb_institution (
+    //   idx INT PRIMARY KEY AUTO_INCREMENT,
+    //   code VARCHAR(20) UNIQUE NOT NULL,
+    //   inst_type VARCHAR(50),
+    //   inst_name VARCHAR(255),
+    //   business_reg_num VARCHAR(50),
+    //   address VARCHAR(500),
+    //   address_detail VARCHAR(255),
+    //   director_name VARCHAR(100),
+    //   other_requests TEXT,
+    //   doctor_sheets VARCHAR(20),
+    //   therapist_sheets VARCHAR(20),
+    //   regist_date DATETIME DEFAULT NOW()
+    // );
+    if (path === '/api/auth/signup-admin' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as {
+        institutionType?: string; institutionName?: string; businessRegNumber?: string
+        businessRegCertNm?: string; businessRegCertData?: string
+        name?: string; phone?: string; id?: string; pw?: string; email?: string
+        address?: string; addressDetail?: string; directorName?: string
+        otherRequests?: string; doctorSheets?: string; therapistSheets?: string
+      }
+      const {
+        institutionType, institutionName, businessRegNumber,
+        businessRegCertNm, businessRegCertData,
+        name, phone, id, pw, email,
+        address, addressDetail, directorName, otherRequests,
+        doctorSheets, therapistSheets
+      } = body
+
+      if (!institutionType || !institutionName || !name || !id || !pw)
+        return err(400, '필수 항목이 누락되었습니다.')
+
+      // ID 중복 확인
+      const [existRows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [id]
+      )
+      if ((existRows as RowDataPacket[]).length > 0) return err(409, '이미 사용 중인 아이디입니다.')
+
+      // 기관 코드 생성: INST + 3자리 순번
+      const [instCountRows] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT instt_code) AS cnt FROM tb_member
+         WHERE mtype IN ('iadmin', 'sadmin', 'wadmin') AND instt_code LIKE 'INST%' AND delete_yn = 'N'`
+      )
+      const instSeq = ((instCountRows[0] as { cnt: number }).cnt ?? 0) + 1
+      const instt_code = `INST${String(instSeq).padStart(3, '0')}`
+      const code = `${instt_code}_A_001`
+
+      // 기관 정보 저장 (테이블 없으면 무시)
+      try {
+        await conn.query(
+          `INSERT INTO tb_institution (code, inst_type, inst_name, business_reg_num, address, address_detail, director_name, other_requests, doctor_sheets, therapist_sheets)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [instt_code, institutionType, institutionName, businessRegNumber ?? null,
+           address ?? null, addressDetail ?? null, directorName ?? null,
+           otherRequests ?? null, doctorSheets ?? null, therapistSheets ?? null]
+        )
+      } catch { /* tb_institution 없으면 건너뜀 */ }
+
+      // 관리자 계정 생성
+      const [insertResult] = await conn.query<ResultSetHeader>(
+        `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, license_file_nm, delete_yn, regist_date)
+         VALUES (?, ?, ?, 'iadmin', ?, ?, ?, ?, ?, 'N', NOW())`,
+        [id, pw, code, name, phone ?? null, email ?? null, instt_code, businessRegCertNm ?? null]
+      )
+
+      // 사업자등록증 저장
+      if (businessRegCertNm && businessRegCertData) {
+        await conn.query(
+          `INSERT INTO tb_license_file (member_idx, source_file_nm, file_data) VALUES (?, ?, ?)`,
+          [insertResult.insertId, businessRegCertNm, businessRegCertData]
+        )
+      }
+
+      return json({ ok: true, instt_code })
+    }
+
+    // POST /api/auth/supplement — 반려된 치료사가 파일 재제출
+    if (path === '/api/auth/supplement' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as {
+        id?: string; license_file_nm?: string; license_file_data?: string
+      }
+      const { id, license_file_nm, license_file_data } = body
+      if (!id || !license_file_nm || !license_file_data) return err(400, '필수 항목이 누락되었습니다.')
+
+      const [memberRows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx FROM tb_member WHERE id = ? AND mtype = 'healler' AND approval_status = '반려' AND delete_yn = 'N' LIMIT 1`,
+        [id]
+      )
+      const member = memberRows[0] as { idx: number } | undefined
+      if (!member) return err(404, '해당 계정을 찾을 수 없습니다.')
+
+      await conn.query(`DELETE FROM tb_license_file WHERE member_idx = ?`, [member.idx])
+      await conn.query(
+        `INSERT INTO tb_license_file (member_idx, source_file_nm, file_data) VALUES (?, ?, ?)`,
+        [member.idx, license_file_nm, license_file_data]
+      )
+      await conn.query(
+        `UPDATE tb_member SET approval_status = '승인대기', license_file_nm = ?, update_date = NOW() WHERE idx = ?`,
+        [license_file_nm, member.idx]
+      )
+      return json({ ok: true })
     }
 
     // POST /api/auth/send-sms
@@ -487,7 +606,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!row) return err(400, '인증번호를 먼저 요청해주세요.')
       if (row.verified) return err(400, '이미 사용된 인증번호입니다.')
       if (new Date(row.expires_at) < new Date()) return err(400, '인증번호가 만료되었습니다. 다시 요청해주세요.')
-      if (row.code !== code) return err(400, '인증번호가 일치하지 않습니다.')
+      if (row.code !== code) return err(400, '인증번호가 동일하지 않습니다.')
 
       await conn.query(`UPDATE sms_verification SET verified = 1 WHERE id = ?`, [row.id])
       return json({ ok: true })
@@ -521,6 +640,526 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
 
     const user = await getCurrentUser(conn, request)
     if (!user) return err(401, 'unauthorized')
+
+    // ── 와우키키 어드민 전용 ──────────────────────────────────────────────────
+
+    // GET /api/admin/stats — 전체 통계
+    if (path === '/api/admin/stats' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const [[inst]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT instt_code) AS cnt FROM tb_member WHERE mtype IN ('iadmin','doctor','healler') AND delete_yn='N'`
+      ) as [RowDataPacket[], unknown]
+      const [[web]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN ('doctor','healler','iadmin') AND delete_yn='N'`
+      ) as [RowDataPacket[], unknown]
+      const [[app]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype='child' AND delete_yn='N'`
+      ) as [RowDataPacket[], unknown]
+      return json({
+        total_institutions: (inst as {cnt:number}).cnt,
+        total_web_users:    (web  as {cnt:number}).cnt,
+        total_app_users:    (app  as {cnt:number}).cnt,
+      })
+    }
+
+    // GET /api/admin/pending-approvals — 승인 대기 목록 (대시보드용)
+    if (path === '/api/admin/pending-approvals' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, id, name, mtype, instt_code, regist_date FROM tb_member
+         WHERE approval_status = '승인대기' AND delete_yn = 'N'
+         ORDER BY regist_date DESC`
+      )
+      return json((rows as Array<RowDataPacket & {idx:number;id:string;name:string;mtype:Mtype;instt_code:string;regist_date:unknown}>).map(r => ({
+        idx:        r.idx,
+        id:         r.id,
+        name:       r.name,
+        role:       r.mtype === 'healler' ? '치료사' : r.mtype === 'iadmin' ? '기관관리자' : r.mtype,
+        instt_code: r.instt_code,
+        regist_date: fmtDate(r.regist_date) ?? '-',
+      })))
+    }
+
+    // POST /api/admin/approve — 승인 또는 반려
+    if (path === '/api/admin/approve' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { idx?: number; action?: 'approve' | 'reject' }
+      if (!body.idx || !body.action) return err(400, '필수 항목 누락')
+      const newStatus = body.action === 'approve' ? null : '반려'
+      await conn.query(
+        `UPDATE tb_member SET approval_status = ?, update_date = NOW() WHERE idx = ?`,
+        [newStatus, body.idx]
+      )
+      return json({ ok: true })
+    }
+
+    // GET /api/admin/institutions?status=pending|rejected|active|inactive
+    if (path === '/api/admin/institutions' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const status = url.searchParams.get('status') ?? 'pending'
+      let whereClause = ''
+      if (status === 'pending')        whereClause = `approval_status = '승인대기'`
+      else if (status === 'rejected')  whereClause = `approval_status = '반려'`
+      else if (status === 'active')    whereClause = `approval_status IS NULL AND delete_yn = 'N'`
+      else                             whereClause = `delete_yn = 'Y'`
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, id, name, mtype, instt_code, regist_date, update_date, admin_memo
+         FROM tb_member
+         WHERE ${whereClause} AND mtype IN ('iadmin','healler')
+         ORDER BY regist_date DESC`
+      )
+      const [[cnt]] = await conn.query<RowDataPacket[]>(
+        `SELECT
+           SUM(approval_status = '승인대기') AS pending,
+           SUM(approval_status = '반려') AS rejected,
+           SUM(approval_status IS NULL AND delete_yn = 'N') AS active,
+           SUM(delete_yn = 'Y') AS inactive
+         FROM tb_member WHERE mtype IN ('iadmin','healler')`
+      ) as [RowDataPacket[], unknown]
+      return json({
+        rows: (rows as RowDataPacket[]).map(r => ({
+          idx:           r.idx,
+          id:            r.id,
+          name:          r.name,
+          role:          r.mtype === 'healler' ? '치료사' : '기관관리자',
+          instt_code:    r.instt_code,
+          regist_date:   fmtDate(r.regist_date) ?? '-',
+          rejected_date: fmtDate(r.update_date) ?? '-',
+          rejected_reason: r.admin_memo ?? '-',
+        })),
+        counts: {
+          pending:  Number(cnt?.pending  ?? 0),
+          rejected: Number(cnt?.rejected ?? 0),
+          active:   Number(cnt?.active   ?? 0),
+          inactive: Number(cnt?.inactive ?? 0),
+        }
+      })
+    }
+
+    // GET /api/admin/institution-stats?instt_code={code} — 기관별 웹/앱 KPI
+    if (path === '/api/admin/institution-stats' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const instt_code = url.searchParams.get('instt_code') ?? ''
+      if (!instt_code) return err(400, '필수 항목 누락')
+      const webMtypes = `'doctor','healler','iadmin'`
+      const q = (mtypes: string, extra: string) => conn.query<RowDataPacket[]>(
+        `SELECT
+           SUM(regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
+           SUM(regist_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
+           SUM(DATE(regist_date) = CURDATE()) AS dau
+         FROM tb_member WHERE mtype IN (${mtypes}) AND delete_yn='N' AND instt_code=? ${extra}`,
+        [instt_code]
+      )
+      const [[web]] = await q(webMtypes, '') as [RowDataPacket[], unknown]
+      const [[app]] = await q(`'child'`, '') as [RowDataPacket[], unknown]
+      return json({
+        web: { mau: Number(web?.mau ?? 0), wau: Number(web?.wau ?? 0), dau: Number(web?.dau ?? 0) },
+        app: { mau: Number(app?.mau ?? 0), wau: Number(app?.wau ?? 0), dau: Number(app?.dau ?? 0) },
+      })
+    }
+
+    // GET /api/admin/stats-history?type=web|app&metric=dau|wau|mau&from=YYYY-MM-DD&to=YYYY-MM-DD
+    if (path === '/api/admin/stats-history' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const type   = url.searchParams.get('type') ?? 'web'
+      const metric = url.searchParams.get('metric') ?? 'dau'
+      const from   = url.searchParams.get('from') ?? new Date(Date.now() - 90 * 864e5).toISOString().slice(0,10)
+      const to     = url.searchParams.get('to')   ?? new Date().toISOString().slice(0,10)
+      const mtypes = type === 'app' ? `'child'` : `'doctor','healler','iadmin'`
+      let groupExpr = `DATE(regist_date)`
+      let orderExpr = `DATE(regist_date) DESC`
+      if (metric === 'wau') { groupExpr = `YEARWEEK(regist_date, 1)`; orderExpr = `YEARWEEK(regist_date, 1) DESC` }
+      if (metric === 'mau') { groupExpr = `DATE_FORMAT(regist_date,'%Y-%m')`; orderExpr = `DATE_FORMAT(regist_date,'%Y-%m') DESC` }
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT ${groupExpr} AS period, COUNT(*) AS cnt
+         FROM tb_member
+         WHERE mtype IN (${mtypes}) AND delete_yn='N'
+           AND DATE(regist_date) BETWEEN ? AND ?
+         GROUP BY ${groupExpr}
+         ORDER BY ${orderExpr}`,
+        [from, to]
+      )
+      const periods = rows as Array<{ period: string; cnt: number }>
+      const result = periods.map((r, i) => {
+        const prev = periods[i + 1]?.cnt ?? r.cnt
+        const change = r.cnt - prev
+        return { period: String(r.period), count: r.cnt, change }
+      })
+      return json(result)
+    }
+
+    // GET /api/admin/stats-detail — 통계/로그용 MAU/WAU/DAU + 기관리스트
+    if (path === '/api/admin/stats-detail' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const webMtypes = `'doctor','healler','iadmin'`
+      const appMtype  = `'child'`
+      const [[webMau]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')`
+      ) as [RowDataPacket[], unknown]
+      const [[webWau]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
+      ) as [RowDataPacket[], unknown]
+      const [[webDau]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND DATE(regist_date) = CURDATE()`
+      ) as [RowDataPacket[], unknown]
+      const [[appMau]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')`
+      ) as [RowDataPacket[], unknown]
+      const [[appWau]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND regist_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
+      ) as [RowDataPacket[], unknown]
+      const [[appDau]] = await conn.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND DATE(regist_date) = CURDATE()`
+      ) as [RowDataPacket[], unknown]
+      const [instRows] = await conn.query<RowDataPacket[]>(
+        `SELECT m.idx, m.instt_code, m.name AS contact_name, m.regist_date,
+                COALESCE(i.instt_name, m.instt_code) AS instt_name,
+                COALESCE(i.instt_type, '-') AS instt_type
+         FROM tb_member m
+         LEFT JOIN tb_institution i ON m.instt_code = i.instt_code
+         WHERE m.mtype='iadmin' AND m.delete_yn='N' AND m.approval_status IS NULL
+         ORDER BY m.regist_date DESC`
+      ).catch(async () => {
+        const [r] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, instt_code, name AS instt_name, '-' AS instt_type, regist_date
+           FROM tb_member WHERE mtype='iadmin' AND delete_yn='N' AND approval_status IS NULL
+           ORDER BY regist_date DESC`
+        ); return r
+      })
+      return json({
+        web: { mau: Number((webMau as {cnt:number}).cnt), wau: Number((webWau as {cnt:number}).cnt), dau: Number((webDau as {cnt:number}).cnt) },
+        app: { mau: Number((appMau as {cnt:number}).cnt), wau: Number((appWau as {cnt:number}).cnt), dau: Number((appDau as {cnt:number}).cnt) },
+        institutions: (instRows as RowDataPacket[]).map(r => ({
+          idx:        r.idx,
+          instt_code: r.instt_code,
+          instt_name: r.instt_name,
+          instt_type: r.instt_type,
+          regist_date: fmtDate(r.regist_date) ?? '-',
+        }))
+      })
+    }
+
+    // GET /api/admin/institution-detail?idx={idx} — 기관 상세 정보
+    if (path === '/api/admin/institution-detail' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const idx = Number(url.searchParams.get('idx') ?? 0)
+      if (!idx) return err(400, '필수 항목 누락')
+      const [[member]] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, id, name, email, phone, instt_code, regist_date FROM tb_member WHERE idx = ? AND mtype = 'iadmin' LIMIT 1`,
+        [idx]
+      ) as [RowDataPacket[], unknown]
+      if (!member) return err(404, '기관을 찾을 수 없습니다.')
+      // tb_institution 있으면 JOIN, 없으면 gracefully fallback
+      let insttInfo: RowDataPacket | null = null
+      try {
+        const [[row]] = await conn.query<RowDataPacket[]>(
+          `SELECT instt_name, instt_type, address FROM tb_institution WHERE instt_code = ? LIMIT 1`,
+          [member.instt_code]
+        ) as [RowDataPacket[], unknown]
+        insttInfo = row ?? null
+      } catch { /* tb_institution 없음 */ }
+      // 사업자 등록증
+      let certFileNm: string | null = null
+      try {
+        const [[cert]] = await conn.query<RowDataPacket[]>(
+          `SELECT file_nm FROM tb_license_file WHERE member_idx = ? ORDER BY idx DESC LIMIT 1`,
+          [idx]
+        ) as [RowDataPacket[], unknown]
+        certFileNm = cert?.file_nm ?? null
+      } catch { /* tb_license_file 없음 */ }
+      return json({
+        idx:          member.idx,
+        id:           member.id,
+        instt_code:   member.instt_code,
+        instt_name:   insttInfo?.instt_name ?? null,
+        instt_type:   insttInfo?.instt_type ?? null,
+        address:      insttInfo?.address ?? null,
+        contact_name:  member.name,
+        contact_email: member.email ?? null,
+        contact_phone: member.phone ?? null,
+        cert_file_nm:  certFileNm,
+        regist_date:   fmtDate(member.regist_date) ?? '-',
+      })
+    }
+
+    // GET /api/admin/institution-members?instt_code={code}&role=child|doctor|therapist&status=active|inactive|all
+    if (path === '/api/admin/institution-members' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const instt_code = url.searchParams.get('instt_code') ?? ''
+      const role       = url.searchParams.get('role') ?? 'child'
+      const status     = url.searchParams.get('status') ?? 'all'
+      if (!instt_code) return err(400, '필수 항목 누락')
+      const mtypes = role === 'doctor' ? ['doctor'] : role === 'therapist' ? ['healler'] : ['child']
+      let statusClause = ''
+      if (status === 'active')   statusClause = `AND delete_yn = 'N'`
+      else if (status === 'inactive') statusClause = `AND delete_yn = 'Y'`
+      const isStaff = role === 'doctor' || role === 'therapist'
+      const childCodeCol = role === 'doctor' ? 'doctor_code' : 'healler_code'
+      let childCountExpr = `NULL`
+      if (isStaff) {
+        try {
+          // verify column exists before embedding in query
+          await conn.query(`SELECT ${childCodeCol} FROM tb_member LIMIT 0`)
+          childCountExpr = `(SELECT COUNT(*) FROM tb_member c WHERE c.mtype='child' AND c.${childCodeCol}=m.code AND c.delete_yn='N')`
+        } catch { /* column doesn't exist */ }
+      }
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT m.idx, m.id, m.code, m.name, m.birth_date, m.is_male_yn, m.regist_date,
+                ${childCountExpr} AS child_count
+         FROM tb_member m
+         WHERE m.instt_code = ? AND m.mtype IN (${ph(mtypes.length)}) ${statusClause}
+         ORDER BY m.regist_date DESC`,
+        [instt_code, ...mtypes]
+      )
+      return json((rows as RowDataPacket[]).map(r => ({
+        idx:         r.idx,
+        id:          r.id,
+        code:        r.code ?? null,
+        name:        r.name,
+        birth_date:  fmtDate(r.birth_date) ?? null,
+        is_male:     r.is_male_yn === 'Y',
+        regist_date: fmtDate(r.regist_date) ?? '-',
+        child_count: r.child_count !== null ? Number(r.child_count) : undefined,
+      })))
+    }
+
+    // POST /api/admin/institutions/deactivate — 기관 비활성화 (선택한 idx 목록)
+    if (path === '/api/admin/institutions/deactivate' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { idxs?: number[] }
+      if (!body.idxs || body.idxs.length === 0) return err(400, '필수 항목 누락')
+      await conn.query(
+        `UPDATE tb_member SET delete_yn = 'Y', update_date = NOW() WHERE idx IN (${ph(body.idxs.length)})`,
+        body.idxs
+      )
+      return json({ ok: true })
+    }
+
+    // GET /api/admin/staff-stats?member_idx={idx} — 의사/치료사 웹 KPI + 커스텀 횟수
+    if (path === '/api/admin/staff-stats' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const member_idx = Number(url.searchParams.get('member_idx') ?? 0)
+      if (!member_idx) return err(400, '필수 항목 누락')
+      let web = { mau: 0, wau: 0, dau: 0, mau_change: 0, wau_change: 0, dau_change: 0 }
+      let custom = { monthly: 0, weekly: 0, daily: 0, m_change: 0, w_change: 0, d_change: 0 }
+      try {
+        const [[r]] = await conn.query<RowDataPacket[]>(
+          `SELECT
+             SUM(login_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
+             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
+             SUM(DATE(login_date) = CURDATE()) AS dau,
+             SUM(login_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH),'%Y-%m-01')
+               AND login_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS prev_mau,
+             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+               AND login_date < DATE_SUB(NOW(), INTERVAL 7 DAY)) AS prev_wau,
+             SUM(DATE(login_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)) AS prev_dau
+           FROM tb_login_log WHERE member_idx = ?`,
+          [member_idx]
+        ) as [RowDataPacket[], unknown]
+        const mau = Number(r?.mau ?? 0), wau = Number(r?.wau ?? 0), dau = Number(r?.dau ?? 0)
+        web = {
+          mau, wau, dau,
+          mau_change: mau - Number(r?.prev_mau ?? 0),
+          wau_change: wau - Number(r?.prev_wau ?? 0),
+          dau_change: dau - Number(r?.prev_dau ?? 0),
+        }
+      } catch { /* tb_login_log 없음 */ }
+      try {
+        const [[c]] = await conn.query<RowDataPacket[]>(
+          `SELECT
+             SUM(activity_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS monthly,
+             SUM(activity_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS weekly,
+             SUM(DATE(activity_date) = CURDATE()) AS daily,
+             SUM(activity_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH),'%Y-%m-01')
+               AND activity_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS prev_m,
+             SUM(activity_date >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+               AND activity_date < DATE_SUB(NOW(), INTERVAL 7 DAY)) AS prev_w,
+             SUM(DATE(activity_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)) AS prev_d
+           FROM tb_custom_log WHERE member_idx = ?`,
+          [member_idx]
+        ) as [RowDataPacket[], unknown]
+        const monthly = Number(c?.monthly ?? 0), weekly = Number(c?.weekly ?? 0), daily = Number(c?.daily ?? 0)
+        custom = {
+          monthly, weekly, daily,
+          m_change: monthly - Number(c?.prev_m ?? 0),
+          w_change: weekly  - Number(c?.prev_w ?? 0),
+          d_change: daily   - Number(c?.prev_d ?? 0),
+        }
+      } catch { /* tb_custom_log 없음 */ }
+      return json({ web, custom })
+    }
+
+    // GET /api/admin/staff-custom-history?member_idx={idx}&page=1&limit=20
+    if (path === '/api/admin/staff-custom-history' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const member_idx = Number(url.searchParams.get('member_idx') ?? 0)
+      const page  = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
+      if (!member_idx) return err(400, '필수 항목 누락')
+      let items: unknown[] = [], total = 0
+      try {
+        const [[cnt]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_custom_log WHERE member_idx = ?`, [member_idx]
+        ) as [RowDataPacket[], unknown]
+        total = Number(cnt?.cnt ?? 0)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT cl.idx, cl.activity_date, cl.status,
+                  CONCAT(c.name, '(', COALESCE(c.code, '-'), ')') AS child_name_code
+           FROM tb_custom_log cl
+           LEFT JOIN tb_member c ON c.idx = cl.child_idx AND c.mtype = 'child'
+           WHERE cl.member_idx = ? ORDER BY cl.activity_date DESC LIMIT ? OFFSET ?`,
+          [member_idx, limit, (page - 1) * limit]
+        )
+        items = (rows as RowDataPacket[]).map(r => ({
+          log_idx:         Number(r.idx),
+          activity_dt:     fmtDateTime(r.activity_date) ?? '-',
+          child_name_code: r.child_name_code ?? '-',
+          status:          r.status ?? '-',
+        }))
+      } catch { /* tb_custom_log 없음 */ }
+      return json({ items, total })
+    }
+
+    // GET /api/admin/custom-detail?log_idx={idx}
+    if (path === '/api/admin/custom-detail' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const log_idx = Number(url.searchParams.get('log_idx') ?? 0)
+      if (!log_idx) return err(400, '필수 항목 누락')
+      let detail: Record<string, string | null> = {}
+      try {
+        const [[row]] = await conn.query<RowDataPacket[]>(
+          `SELECT target_position, target_articulation, core_syllable,
+                  word_age, age_consonant, can_read_korean, word_length, game_count
+           FROM tb_custom_log WHERE idx = ?`,
+          [log_idx]
+        ) as [RowDataPacket[], unknown]
+        if (row) {
+          detail = {
+            target_position:     row.target_position     ?? null,
+            target_articulation: row.target_articulation ?? null,
+            core_syllable:       row.core_syllable        ?? null,
+            word_age:            row.word_age             ?? null,
+            age_consonant:       row.age_consonant        ?? null,
+            can_read:            row.can_read_korean      ?? null,
+            word_length:         row.word_length          ?? null,
+            game_count:          row.game_count != null ? String(row.game_count) + '회' : null,
+          }
+        }
+      } catch { /* tb_custom_log 컬럼 없음 */ }
+      return json(detail)
+    }
+
+    // GET /api/admin/staff-task-history?member_idx={idx}&page=1&limit=20
+    if (path === '/api/admin/staff-task-history' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const member_idx = Number(url.searchParams.get('member_idx') ?? 0)
+      const page  = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
+      if (!member_idx) return err(400, '필수 항목 누락')
+      let items: unknown[] = [], total = 0
+      try {
+        const [[cnt]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_task_log WHERE member_idx = ?`, [member_idx]
+        ) as [RowDataPacket[], unknown]
+        total = Number(cnt?.cnt ?? 0)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT tl.task_date, tl.task_content,
+                  CONCAT(c.name, '(', COALESCE(c.code, '-'), ')') AS child_name_code
+           FROM tb_task_log tl
+           LEFT JOIN tb_member c ON c.idx = tl.child_idx AND c.mtype = 'child'
+           WHERE tl.member_idx = ? ORDER BY tl.task_date DESC LIMIT ? OFFSET ?`,
+          [member_idx, limit, (page - 1) * limit]
+        )
+        items = (rows as RowDataPacket[]).map(r => ({
+          task_dt:         fmtDateTime(r.task_date) ?? '-',
+          task_content:    r.task_content ?? '-',
+          child_name_code: r.child_name_code ?? '-',
+        }))
+      } catch { /* tb_task_log 없음 */ }
+      return json({ items, total })
+    }
+
+    // GET /api/admin/child-stats?member_idx={idx} — 아동 앱 MAU/WAU/DAU
+    if (path === '/api/admin/child-stats' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const member_idx = Number(url.searchParams.get('member_idx') ?? 0)
+      if (!member_idx) return err(400, '필수 항목 누락')
+      let mau = 0, wau = 0, dau = 0, mau_change = 0, wau_change = 0, dau_change = 0
+      try {
+        const [[r]] = await conn.query<RowDataPacket[]>(
+          `SELECT
+             SUM(login_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
+             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
+             SUM(DATE(login_date) = CURDATE()) AS dau,
+             SUM(login_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH),'%Y-%m-01')
+               AND login_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS prev_mau,
+             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+               AND login_date < DATE_SUB(NOW(), INTERVAL 7 DAY)) AS prev_wau,
+             SUM(DATE(login_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)) AS prev_dau
+           FROM tb_login_log WHERE member_idx = ?`,
+          [member_idx]
+        ) as [RowDataPacket[], unknown]
+        mau = Number(r?.mau ?? 0); wau = Number(r?.wau ?? 0); dau = Number(r?.dau ?? 0)
+        mau_change = mau - Number(r?.prev_mau ?? 0)
+        wau_change = wau - Number(r?.prev_wau ?? 0)
+        dau_change = dau - Number(r?.prev_dau ?? 0)
+      } catch { /* tb_login_log 없음 */ }
+      return json({ mau, wau, dau, mau_change, wau_change, dau_change })
+    }
+
+    // GET /api/admin/child-login-history?member_idx={idx}&page=1&limit=20
+    if (path === '/api/admin/child-login-history' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const member_idx = Number(url.searchParams.get('member_idx') ?? 0)
+      const page  = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
+      if (!member_idx) return err(400, '필수 항목 누락')
+      let items: unknown[] = [], total = 0
+      try {
+        const [[cnt]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_login_log WHERE member_idx = ?`, [member_idx]
+        ) as [RowDataPacket[], unknown]
+        total = Number(cnt?.cnt ?? 0)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT login_date, ip_addr, access_env FROM tb_login_log
+           WHERE member_idx = ? ORDER BY login_date DESC LIMIT ? OFFSET ?`,
+          [member_idx, limit, (page - 1) * limit]
+        )
+        items = (rows as RowDataPacket[]).map(r => ({
+          login_dt: fmtDateTime(r.login_date) ?? '-',
+          ip:       r.ip_addr ?? '-',
+          env:      r.access_env ?? 'APP',
+        }))
+      } catch { /* tb_login_log 없음 */ }
+      return json({ items, total })
+    }
+
+    // GET /api/admin/child-content-history?member_idx={idx}&page=1&limit=20
+    if (path === '/api/admin/child-content-history' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const member_idx = Number(url.searchParams.get('member_idx') ?? 0)
+      const page  = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
+      if (!member_idx) return err(400, '필수 항목 누락')
+      let items: unknown[] = [], total = 0
+      try {
+        const [[cnt]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_activity_log WHERE member_idx = ?`, [member_idx]
+        ) as [RowDataPacket[], unknown]
+        total = Number(cnt?.cnt ?? 0)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT activity_date, activity_name, duration_min FROM tb_activity_log
+           WHERE member_idx = ? ORDER BY activity_date DESC LIMIT ? OFFSET ?`,
+          [member_idx, limit, (page - 1) * limit]
+        )
+        items = (rows as RowDataPacket[]).map(r => ({
+          activity_dt:   fmtDateTime(r.activity_date) ?? '-',
+          activity_name: r.activity_name ?? '-',
+          duration_min:  Number(r.duration_min ?? 0),
+        }))
+      } catch { /* tb_activity_log 없음 */ }
+      return json({ items, total })
+    }
 
     // GET /api/me
     if (path === '/api/me' && method === 'GET') {
@@ -2051,6 +2690,108 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         )
         return json({ ok: true })
       }
+    }
+
+    // GET /api/admin/notices?page=1&limit=20&search=
+    if (path === '/api/admin/notices' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const page  = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
+      const search = url.searchParams.get('search') ?? ''
+      const whereArgs: unknown[] = []
+      let where = `WHERE BOARD_ID = 'notice'`
+      if (search) { where += ' AND BOARD_TITLE LIKE ?'; whereArgs.push(`%${search}%`) }
+      let items: unknown[] = [], total = 0
+      try {
+        const [[cnt]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_board_list ${where}`, whereArgs
+        ) as [RowDataPacket[], unknown]
+        total = Number(cnt?.cnt ?? 0)
+        // 확장 컬럼(BOARD_OPEN, BOARD_TARGET, WRITE_ID) 시도, 없으면 fallback
+        let rows: RowDataPacket[] = []
+        try {
+          const [r] = await conn.query<RowDataPacket[]>(
+            `SELECT bl.BOARD_KEY, bl.GUBUN, bl.BOARD_FIXED, bl.BOARD_TITLE, bl.BOARD_READ_COUNT,
+                    DATE_FORMAT(bl.BOARD_SAVE_DATE, '%Y.%m.%d') AS created_at,
+                    bl.BOARD_OPEN, bl.BOARD_TARGET, m.name AS author_name
+             FROM tb_board_list bl
+             LEFT JOIN tb_member m ON m.id = bl.WRITE_ID AND m.delete_yn = 'N'
+             ${where} ORDER BY bl.BOARD_FIXED DESC, bl.BOARD_SAVE_DATE DESC, bl.BOARD_KEY DESC
+             LIMIT ? OFFSET ?`,
+            [...whereArgs, limit, (page - 1) * limit]
+          )
+          rows = r as RowDataPacket[]
+        } catch {
+          const [r] = await conn.query<RowDataPacket[]>(
+            `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE, BOARD_READ_COUNT,
+                    DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS created_at
+             FROM tb_board_list ${where}
+             ORDER BY BOARD_FIXED DESC, BOARD_SAVE_DATE DESC, BOARD_KEY DESC
+             LIMIT ? OFFSET ?`,
+            [...whereArgs, limit, (page - 1) * limit]
+          )
+          rows = r as RowDataPacket[]
+        }
+        items = rows.map(r => ({
+          idx:          Number(r.BOARD_KEY),
+          is_pinned:    Boolean(r.BOARD_FIXED),
+          status:       r.BOARD_OPEN === 'N' ? '비공개' : '공개',
+          target_roles: r.BOARD_TARGET ?? '',
+          notice_type:  r.GUBUN ?? '',
+          title:        r.BOARD_TITLE ?? '',
+          views:        Number(r.BOARD_READ_COUNT ?? 0),
+          created_at:   r.created_at ?? '-',
+          author_name:  r.author_name ?? '-',
+        }))
+      } catch { /* tb_board_list 없음 */ }
+      return json({ items, total })
+    }
+
+    // POST /api/admin/notices — 공지 작성
+    if (path === '/api/admin/notices' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = await request.json() as {
+        is_pinned?: boolean; target_roles?: string; notice_type?: string
+        title?: string; content?: string; status?: string
+      }
+      if (!body.title?.trim()) return err(400, '제목을 입력해주세요.')
+      try {
+        await conn.query(
+          `INSERT INTO tb_board_list
+             (BOARD_ID, BOARD_FIXED, BOARD_TARGET, GUBUN, BOARD_TITLE, BOARD_CONTENT, BOARD_OPEN, BOARD_SAVE_DATE, WRITE_ID)
+           VALUES ('notice', ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          [
+            body.is_pinned ? 1 : 0,
+            body.target_roles ?? '',
+            body.notice_type ?? '',
+            body.title,
+            body.content ?? '',
+            body.status === 'private' ? 'N' : 'Y',
+            user.id,
+          ]
+        )
+      } catch {
+        await conn.query(
+          `INSERT INTO tb_board_list (BOARD_ID, BOARD_FIXED, GUBUN, BOARD_TITLE, BOARD_CONTENT, BOARD_SAVE_DATE)
+           VALUES ('notice', ?, ?, ?, ?, NOW())`,
+          [body.is_pinned ? 1 : 0, body.notice_type ?? '', body.title, body.content ?? '']
+        )
+      }
+      return json({ ok: true })
+    }
+
+    // DELETE /api/admin/notices  body: { idxs: number[] }
+    if (path === '/api/admin/notices' && method === 'DELETE') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = await request.json() as { idxs?: number[] }
+      if (!body.idxs?.length) return err(400, '필수 항목 누락')
+      try {
+        await conn.query(
+          `DELETE FROM tb_board_list WHERE BOARD_ID = 'notice' AND BOARD_KEY IN (${body.idxs.map(() => '?').join(',')})`,
+          body.idxs
+        )
+      } catch { /* 무시 */ }
+      return json({ ok: true })
     }
 
     return err(404, `Unknown route: ${method} ${path}`)

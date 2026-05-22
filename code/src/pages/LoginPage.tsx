@@ -49,6 +49,10 @@ export default function LoginPage() {
     const result = await login(role, id, password)
     setSubmitting(false)
     if (!result.ok) {
+      if (result.rejected) {
+        go({ name: 'signup-rejected' })
+        return
+      }
       setError(result.error ?? '로그인에 실패했습니다.')
       return
     }

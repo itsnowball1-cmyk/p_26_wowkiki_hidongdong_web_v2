@@ -15,7 +15,7 @@ export type CurrentUser = {
 
 type AuthValue = {
   user: CurrentUser | null
-  login: (role: Role, id: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  login: (role: Role, id: string, password: string) => Promise<{ ok: boolean; error?: string; rejected?: boolean }>
   logout: () => void
 }
 
@@ -95,9 +95,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(u)
         return { ok: true }
       }
+      const data = await res.json().catch(() => ({})) as { error?: string; id?: string; name?: string; instt_code?: string }
+      if (res.status === 403) {
+        if (data.error === '반려') {
+          sessionStorage.setItem('rejected_user', JSON.stringify({ id: data.id, name: data.name, institutionCode: data.instt_code }))
+          return { ok: false, rejected: true }
+        }
+        return { ok: false, error: data.error ?? LOGIN_FAIL_MSG }
+      }
       if (res.status === 401) {
-        const data = await res.json().catch(() => ({}))
-        return { ok: false, error: (data as { error?: string }).error ?? LOGIN_FAIL_MSG }
+        return { ok: false, error: data.error ?? LOGIN_FAIL_MSG }
       }
       return { ok: false, error: LOGIN_FAIL_MSG }
     } catch {

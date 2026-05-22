@@ -7,3 +7,4 @@ dist
 *.tsbuildinfo
 figma_exports/
 tmp/
+.claude/
