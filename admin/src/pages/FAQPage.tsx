@@ -1,44 +1,46 @@
 import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
-import NoticesWriteForm from './NoticesWriteForm'
-import NoticesEditForm from './NoticesEditForm'
+import { useRouter } from '../lib/router'
+import FAQWriteForm from './FAQWriteForm'
+import FAQEditForm from './FAQEditForm'
 
-type Notice = {
+type FAQ = {
   idx: number
-  is_pinned: boolean
   status: string
   target_roles: string
-  notice_type: string
+  category: string
   title: string
   views: number
   created_at: string
   author_name: string
 }
 
-const NOTICE_TYPE_LABELS: Record<string, string> = {
-  '1': '전체 공지', '2': '회원가입 반려',
-  '3': '서비스 안내', '4': '시스템 점검', '5': '업데이트',
-}
 
 const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
 const PAGE_SIZE = 20
 
-export default function NoticesPage() {
+export default function FAQPage() {
   const [view, setView] = useState<'list' | 'write'>('list')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
-  const [toast, setToast] = useState('')
-
-  const showToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(''), 2000)
-  }
-  const [notices, setNotices] = useState<Notice[]>([])
+  const [faqs, setFaqs] = useState<FAQ[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [toast, setToast] = useState('')
+  const { navKey } = useRouter()
+
+  useEffect(() => {
+    setView('list')
+    setSelectedIdx(null)
+  }, [navKey])
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(''), 2000)
+  }
 
   const loadPage = (p: number) => {
     setLoading(true)
@@ -46,16 +48,16 @@ export default function NoticesPage() {
     setChecked(new Set())
     const params = new URLSearchParams({ page: String(p), limit: String(PAGE_SIZE) })
     if (search) params.set('search', search)
-    fetch(`/api/admin/notices?${params}`, { headers: HEADERS })
+    fetch(`/api/admin/faq?${params}`, { headers: HEADERS })
       .then(r => r.ok ? r.json() : { items: [], total: 0 })
-      .then(d => { setNotices(d.items ?? []); setTotal(d.total ?? 0) })
+      .then(d => { setFaqs(d.items ?? []); setTotal(d.total ?? 0) })
       .finally(() => setLoading(false))
   }
 
   const handleDelete = async () => {
     if (checked.size === 0) return
     if (!confirm(`선택한 ${checked.size}건을 삭제하시겠습니까?`)) return
-    await fetch('/api/admin/notices', {
+    await fetch('/api/admin/faq', {
       method: 'DELETE',
       headers: HEADERS,
       body: JSON.stringify({ idxs: [...checked] }),
@@ -64,34 +66,34 @@ export default function NoticesPage() {
   }
 
   const toggleAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) setChecked(new Set(notices.map(n => n.idx)))
+    if (e.target.checked) setChecked(new Set(faqs.map(f => f.idx)))
     else setChecked(new Set())
   }
 
   useEffect(() => { loadPage(1) }, [search])
 
   if (view === 'write') {
-    return <NoticesWriteForm onBack={(saved) => { setView('list'); loadPage(1); if (saved) showToast('저장 완료되었습니다.') }} />
+    return <FAQWriteForm onBack={(saved) => { setView('list'); loadPage(1); if (saved) showToast('저장 완료되었습니다.') }} />
   }
 
   if (selectedIdx !== null) {
-    return <NoticesEditForm idx={selectedIdx} onBack={(saved) => { setSelectedIdx(null); loadPage(page); if (saved) showToast('수정 완료되었습니다.') }} />
+    return <FAQEditForm idx={selectedIdx} onBack={(saved) => { setSelectedIdx(null); loadPage(page); if (saved) showToast('수정 완료되었습니다.') }} />
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <>
-    <Layout title="공지/FAQ">
+    <Layout title="FAQ">
       {/* 페이지 헤더 */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-[30px] font-semibold text-[#000000]">공지사항</h1>
+        <h1 className="text-[30px] font-semibold text-[#000000]">FAQ</h1>
         <button
           type="button"
           onClick={() => setView('write')}
           className="h-[40px] px-4 bg-[#005744] text-white text-[15px] font-medium rounded-[5px] hover:bg-[#004535] transition-colors"
         >
-          공지사항 추가
+          FAQ 추가
         </button>
       </div>
 
@@ -130,16 +132,15 @@ export default function NoticesPage() {
 
       {/* 테이블 */}
       <div className="bg-white border border-[#DEDEDE] rounded-[10px] overflow-hidden">
-        <div className="grid grid-cols-[52px_90px_90px_1fr_140px_2fr_80px_130px_110px] px-4 h-[52px] items-center bg-[#EAEAEA] border-b border-[#DEDEDE] text-[15px] font-medium text-[#202020] text-center">
+        <div className="grid grid-cols-[52px_100px_180px_130px_2fr_80px_130px_110px] px-4 h-[52px] items-center bg-[#EAEAEA] border-b border-[#DEDEDE] text-[15px] font-medium text-[#202020] text-center">
           <div className="flex items-center justify-center">
             <input
               type="checkbox"
               className="w-[18px] h-[18px] accent-[#005744] cursor-pointer"
-              checked={checked.size === notices.length && notices.length > 0}
+              checked={checked.size === faqs.length && faqs.length > 0}
               onChange={toggleAll}
             />
           </div>
-          <span>고정여부</span>
           <span>상태</span>
           <span>노출대상</span>
           <span>유형</span>
@@ -151,46 +152,40 @@ export default function NoticesPage() {
 
         {loading ? (
           <Empty text="불러오는 중…" />
-        ) : notices.length === 0 ? (
-          <Empty text="공지사항이 없습니다." />
+        ) : faqs.length === 0 ? (
+          <Empty text="FAQ가 없습니다." />
         ) : (
-          notices.map((n, i) => (
+          faqs.map((f, i) => (
             <div
-              key={n.idx}
-              className={`grid grid-cols-[52px_90px_90px_1fr_140px_2fr_80px_130px_110px] px-4 h-[52px] items-center text-[15px] text-center ${i < notices.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
+              key={f.idx}
+              className={`grid grid-cols-[52px_100px_180px_130px_2fr_80px_130px_110px] px-4 h-[52px] items-center text-[15px] text-center ${i < faqs.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
             >
               <div className="flex items-center justify-center">
                 <input
                   type="checkbox"
                   className="w-[18px] h-[18px] accent-[#005744] cursor-pointer"
-                  checked={checked.has(n.idx)}
+                  checked={checked.has(f.idx)}
                   onChange={() => {
                     const next = new Set(checked)
-                    if (next.has(n.idx)) next.delete(n.idx)
-                    else next.add(n.idx)
+                    if (next.has(f.idx)) next.delete(f.idx)
+                    else next.add(f.idx)
                     setChecked(next)
                   }}
                 />
               </div>
-              <div className="flex items-center justify-center">
-                {n.is_pinned
-                  ? <span className="px-2 py-0.5 rounded-[3px] text-[13px] font-medium text-white bg-[#57987E]">고정</span>
-                  : <span className="text-[#585858]">일반</span>
-                }
-              </div>
-              <span className={n.status === '비공개' ? 'text-[#B5B5B5]' : 'text-[#585858]'}>{n.status || '공개'}</span>
-              <span className="text-[#585858] text-left px-2 truncate">{n.target_roles || '-'}</span>
-              <span className="text-[#585858]">{(NOTICE_TYPE_LABELS[n.notice_type] ?? n.notice_type) || '-'}</span>
+              <span className={f.status === '비공개' ? 'text-[#B5B5B5]' : 'text-[#585858]'}>{f.status}</span>
+              <span className="text-[#585858] text-left px-2 truncate">{f.target_roles || '-'}</span>
+              <span className="text-[#585858]">{f.category || '-'}</span>
               <button
                 type="button"
-                onClick={() => setSelectedIdx(n.idx)}
+                onClick={() => setSelectedIdx(f.idx)}
                 className="text-[#585858] text-left px-2 truncate hover:text-[#005744] hover:underline w-full"
               >
-                {n.title}
+                {f.title}
               </button>
-              <span className="text-[#585858]">{n.views.toLocaleString()}</span>
-              <span className="text-[#585858]">{n.created_at}</span>
-              <span className="text-[#585858]">{n.author_name || '-'}</span>
+              <span className="text-[#585858]">{f.views.toLocaleString()}</span>
+              <span className="text-[#585858]">{f.created_at}</span>
+              <span className="text-[#585858]">{f.author_name || '-'}</span>
             </div>
           ))
         )}
@@ -226,7 +221,6 @@ export default function NoticesPage() {
       )}
     </Layout>
 
-    {/* 토스트 */}
     {toast && (
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#333333] text-white text-[15px] px-6 py-3 rounded-[8px] shadow-lg z-50">
         {toast}

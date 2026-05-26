@@ -8,6 +8,7 @@ type InstitutionRow = {
   idx: number
   id: string
   name: string
+  inst_name: string
   role: string
   instt_code: string
   instt_type: string
@@ -27,6 +28,9 @@ const TABS: { key: TabName; label: string }[] = [
   { key: 'inactive', label: '가입승인취소' },
 ]
 
+type ApproveModal = { idx: number; insttCode: string }
+type RejectModal  = { idx: number; title: string; reason: string }
+
 export default function InstitutionsPage() {
   const { go } = useRouter()
   const [tab, setTab] = useState<TabName>('pending')
@@ -38,6 +42,8 @@ export default function InstitutionsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [deactivateModal, setDeactivateModal] = useState(false)
   const [deactivateLoading, setDeactivateLoading] = useState(false)
+  const [approveModal, setApproveModal] = useState<ApproveModal | null>(null)
+  const [rejectModal, setRejectModal] = useState<RejectModal | null>(null)
 
   const fetchData = async (t: TabName) => {
     setLoading(true)
@@ -56,24 +62,36 @@ export default function InstitutionsPage() {
 
   useEffect(() => { fetchData(tab) }, [tab])
 
-  const handleApprove = async (idx: number, action: 'approve' | 'reject') => {
+  const doApprove = async (idx: number, instt_code: string) => {
     setActionLoading(idx)
     try {
       const res = await fetch('/api/admin/approve', {
         method: 'POST',
         headers: HEADERS,
-        body: JSON.stringify({ idx, action })
+        body: JSON.stringify({ idx, action: 'approve', instt_code })
       })
       if (res.ok) {
         setRows(prev => prev.filter(r => r.idx !== idx))
-        setCounts(prev => {
-          const next = { ...prev }
-          if (tab === 'pending')  next.pending  -= 1
-          if (tab === 'rejected') next.rejected -= 1
-          if (action === 'approve') next.active  += 1
-          if (action === 'reject')  next.rejected += 1
-          return next
-        })
+        setCounts(prev => ({ ...prev, pending: prev.pending - 1, active: prev.active + 1 }))
+        setApproveModal(null)
+      }
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const doReject = async (idx: number, reject_title: string, reject_reason: string) => {
+    setActionLoading(idx)
+    try {
+      const res = await fetch('/api/admin/approve', {
+        method: 'POST',
+        headers: HEADERS,
+        body: JSON.stringify({ idx, action: 'reject', reject_title, reject_reason })
+      })
+      if (res.ok) {
+        setRows(prev => prev.filter(r => r.idx !== idx))
+        setCounts(prev => ({ ...prev, pending: prev.pending - 1, rejected: prev.rejected + 1 }))
+        setRejectModal(null)
       }
     } finally {
       setActionLoading(null)
@@ -100,7 +118,7 @@ export default function InstitutionsPage() {
   }
 
   const filtered = rows.filter(r =>
-    !search || r.name.includes(search) || r.instt_code.includes(search) || r.id.includes(search)
+    !search || r.inst_name.includes(search) || r.name.includes(search) || r.instt_code.includes(search) || r.id.includes(search)
   )
 
   const allChecked = filtered.length > 0 && filtered.every(r => selected.has(r.idx))
@@ -222,7 +240,7 @@ export default function InstitutionsPage() {
                   onClick={() => go({ name: 'institution-detail', id: String(r.idx) })}
                   className="text-left text-[#484848] font-medium hover:text-[#005744] transition-colors"
                 >
-                  {r.name}
+                  {r.inst_name || '-'}
                 </button>
                 <span className="text-[#585858]">{r.instt_type || '-'}</span>
                 <span className="text-[#585858]">{r.instt_code}</span>
@@ -255,10 +273,7 @@ export default function InstitutionsPage() {
               >
                 <span className="text-[#585858]">{i + 1}</span>
                 <span className="text-[#585858]">{r.regist_date}</span>
-                <div>
-                  <p className="text-[#484848] font-medium">{r.name}</p>
-                  <p className="text-[12px] text-[#B5B5B5]">{r.instt_code}</p>
-                </div>
+                <span className="text-[#484848] font-medium">{r.inst_name || '-'}</span>
                 <button
                   type="button"
                   onClick={() => go({ name: 'institution-detail', id: String(r.idx) })}
@@ -272,13 +287,13 @@ export default function InstitutionsPage() {
                 <div className="flex justify-center gap-2">
                   <button
                     type="button"
-                    onClick={() => handleApprove(r.idx, 'approve')}
+                    onClick={() => setApproveModal({ idx: r.idx, insttCode: '' })}
                     disabled={actionLoading === r.idx}
                     className="w-[60px] h-[28px] rounded-[5px] bg-[#6EBE88] text-white text-[13px] font-medium hover:opacity-80 transition disabled:opacity-50"
                   >승인</button>
                   <button
                     type="button"
-                    onClick={() => handleApprove(r.idx, 'reject')}
+                    onClick={() => setRejectModal({ idx: r.idx, title: '', reason: '' })}
                     disabled={actionLoading === r.idx}
                     className="w-[60px] h-[28px] rounded-[5px] bg-[#FF7979] text-white text-[13px] font-medium hover:opacity-80 transition disabled:opacity-50"
                   >반려</button>
@@ -312,10 +327,7 @@ export default function InstitutionsPage() {
               >
                 <span className="text-[#585858]">{i + 1}</span>
                 <span className="text-[#585858]">{r.regist_date}</span>
-                <div>
-                  <p className="text-[#484848] font-medium">{r.name}</p>
-                  <p className="text-[12px] text-[#B5B5B5]">{r.instt_code}</p>
-                </div>
+                <span className="text-[#484848] font-medium">{r.inst_name || '-'}</span>
                 <div>
                   <p className="text-[#585858]">{r.rejected_date}</p>
                   <p className="text-[12px] text-[#B5B5B5] truncate">{r.rejected_reason}</p>
@@ -333,7 +345,7 @@ export default function InstitutionsPage() {
                 <div className="flex justify-center">
                   <button
                     type="button"
-                    onClick={() => handleApprove(r.idx, 'approve')}
+                    onClick={() => setApproveModal({ idx: r.idx, insttCode: '' })}
                     disabled={actionLoading === r.idx}
                     className="w-[60px] h-[28px] rounded-[5px] bg-[#6EBE88] text-white text-[13px] font-medium hover:opacity-80 transition disabled:opacity-50"
                   >승인</button>
@@ -382,6 +394,78 @@ export default function InstitutionsPage() {
               >
                 취소
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 승인 모달 — 기관코드 입력 */}
+      {approveModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-[10px] w-[420px] px-8 py-8 flex flex-col gap-5">
+            <p className="text-[20px] font-bold text-[#2F2E2E]">기관 승인</p>
+            <p className="text-[14px] text-[#585858]">부여할 기관 식별코드를 입력해주세요.</p>
+            <input
+              type="text"
+              value={approveModal.insttCode}
+              onChange={e => setApproveModal({ ...approveModal, insttCode: e.target.value.toUpperCase() })}
+              placeholder="예: HBD, ABC001"
+              className="w-full h-[42px] px-3 border border-[#B1B1B1] rounded-[5px] text-[15px] outline-none focus:border-[#005744]"
+            />
+            <div className="flex gap-4 justify-center mt-2">
+              <button
+                type="button"
+                onClick={() => doApprove(approveModal.idx, approveModal.insttCode)}
+                disabled={!approveModal.insttCode.trim() || actionLoading === approveModal.idx}
+                className="w-[125px] h-[40px] rounded-[5px] bg-[#005744] text-white text-[15px] font-medium hover:opacity-90 transition disabled:opacity-50"
+              >승인</button>
+              <button
+                type="button"
+                onClick={() => setApproveModal(null)}
+                className="w-[125px] h-[40px] rounded-[5px] border border-[#005744] text-[#005744] text-[15px] font-medium hover:bg-[#005744] hover:text-white transition"
+              >취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 반려 모달 — 제목 + 사유 입력 */}
+      {rejectModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-[10px] w-[480px] px-8 py-8 flex flex-col gap-4">
+            <p className="text-[20px] font-bold text-[#2F2E2E]">반려 사유 입력</p>
+            <div className="flex flex-col gap-1">
+              <label className="text-[14px] font-medium text-[#585858]">제목</label>
+              <input
+                type="text"
+                value={rejectModal.title}
+                onChange={e => setRejectModal({ ...rejectModal, title: e.target.value })}
+                placeholder="반려 제목을 입력해주세요."
+                className="w-full h-[42px] px-3 border border-[#B1B1B1] rounded-[5px] text-[15px] outline-none focus:border-[#005744]"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[14px] font-medium text-[#585858]">사유</label>
+              <textarea
+                value={rejectModal.reason}
+                onChange={e => setRejectModal({ ...rejectModal, reason: e.target.value })}
+                placeholder="반려 사유를 입력해주세요."
+                rows={4}
+                className="w-full px-3 py-2 border border-[#B1B1B1] rounded-[5px] text-[15px] outline-none focus:border-[#005744] resize-none"
+              />
+            </div>
+            <div className="flex gap-4 justify-center mt-2">
+              <button
+                type="button"
+                onClick={() => doReject(rejectModal.idx, rejectModal.title, rejectModal.reason)}
+                disabled={!rejectModal.title.trim() || actionLoading === rejectModal.idx}
+                className="w-[125px] h-[40px] rounded-[5px] bg-[#FF7979] text-white text-[15px] font-medium hover:opacity-90 transition disabled:opacity-50"
+              >반려</button>
+              <button
+                type="button"
+                onClick={() => setRejectModal(null)}
+                className="w-[125px] h-[40px] rounded-[5px] border border-[#005744] text-[#005744] text-[15px] font-medium hover:bg-[#005744] hover:text-white transition"
+              >취소</button>
             </div>
           </div>
         </div>

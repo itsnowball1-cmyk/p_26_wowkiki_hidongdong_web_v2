@@ -35,6 +35,7 @@ type Route =
   | { name: 'signup-form'; role: SignupRole }
   | { name: 'signup-rejected' }
   | { name: 'signup-supplement' }
+  | { name: 'iadmin-supplement' }
 
 type RouterValue = {
   route: Route
@@ -77,6 +78,7 @@ function parseHash(hash: string): Route {
   if (hash.startsWith('#/login')) return { name: 'login' }
   if (hash.startsWith('#/signup/rejected')) return { name: 'signup-rejected' }
   if (hash.startsWith('#/signup/supplement')) return { name: 'signup-supplement' }
+  if (hash.startsWith('#/iadmin/supplement')) return { name: 'iadmin-supplement' }
   const terms = hash.match(/^#\/signup\/terms\/(admin|doctor|therapist)/)
   if (terms && isRole(terms[1])) return { name: 'signup-terms', role: terms[1] }
   const form = hash.match(/^#\/signup\/form\/(admin|doctor|therapist)/)
@@ -119,6 +121,7 @@ function toHash(route: Route): string {
   if (route.name === 'login') return '#/login'
   if (route.name === 'signup-rejected') return '#/signup/rejected'
   if (route.name === 'signup-supplement') return '#/signup/supplement'
+  if (route.name === 'iadmin-supplement') return '#/iadmin/supplement'
   if (route.name === 'signup-terms') return `#/signup/terms/${route.role}`
   if (route.name === 'signup-form') return `#/signup/form/${route.role}`
   if (route.name === 'signup') return '#/signup'

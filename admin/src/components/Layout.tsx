@@ -2,53 +2,102 @@ import { type ReactNode } from 'react'
 import { useRouter, type RouteName } from '../lib/router'
 import { useAuth } from '../lib/auth'
 
-type MenuItem = { label: string; route: RouteName }
+type MenuItemDef = {
+  label: string
+  route?: RouteName
+  level: 0 | 1
+  hasChevron?: boolean
+}
 
-const MENU: MenuItem[] = [
-  { label: '대시보드',  route: 'dashboard' },
-  { label: '기관/계정', route: 'institutions' },
-  { label: '아동관리',  route: 'children' },
-  { label: '통계/로그', route: 'stats' },
-  { label: '공지/FAQ',  route: 'notices' },
-  { label: '보안',      route: 'security' },
-  { label: '콘텐츠',    route: 'content' },
-  { label: '버전관리',  route: 'versions' },
-  { label: '데이터',    route: 'data' },
-  { label: '마이페이지',route: 'mypage' },
+const MENU: MenuItemDef[] = [
+  { label: '대시보드',     route: 'dashboard',    level: 0 },
+  { label: '아동관리',     route: 'children',     level: 0, hasChevron: true },
+  { label: '기관/계정',    route: 'institutions', level: 0, hasChevron: true },
+  { label: '통계/로그',    route: 'stats',        level: 0, hasChevron: true },
+  { label: '회원관리',                            level: 0, hasChevron: true },
+  { label: '공지사항',     route: 'notices',      level: 1 },
+  { label: 'FAQ',          route: 'faq',          level: 1 },
+  { label: '1:1 문의사항',  route: 'cs',           level: 1 },
+  { label: '앱 푸시',                             level: 1 },
+  { label: '문자 설정',    route: 'sms-settings', level: 1 },
+  { label: '보안',         route: 'security',     level: 0, hasChevron: true },
+  { label: '콘텐츠',       route: 'content',      level: 0, hasChevron: true },
+  { label: '버전관리',     route: 'versions',     level: 0, hasChevron: true },
+  { label: '데이터',       route: 'data',         level: 0, hasChevron: true },
+  { label: '마이페이지',   route: 'mypage',       level: 0, hasChevron: true },
 ]
 
 export default function Layout({ children, title }: { children: ReactNode; title?: string }) {
   const { route, go } = useRouter()
   const { user, logout } = useAuth()
 
+  const activeRoute = route.name
+
   return (
     <div className="flex h-screen bg-[#FAFAFA] overflow-hidden">
       {/* ── 사이드바 ── */}
-      <aside className="w-[240px] flex-shrink-0 bg-white flex flex-col" style={{ boxShadow: '2px 0 8px rgba(0,0,0,0.08)' }}>
+      <aside className="w-[240px] flex-shrink-0 bg-white flex flex-col" style={{ boxShadow: '0px 0px 5px 0px rgba(0,0,0,0.25)' }}>
         {/* 로고 */}
-        <div className="h-[64px] flex items-center px-6 border-b border-[#DEDEDE]">
-          <span className="text-[22px] font-extrabold" style={{ fontFamily: 'Pretendard', color: '#7CBE26' }}>
+        <div className="h-[64px] flex items-center px-5 border-b border-[#DEDEDE]">
+          <span className="text-[20px] font-extrabold" style={{ color: '#7CBE26' }}>
             하이동동
           </span>
         </div>
 
         {/* 메뉴 */}
-        <nav className="flex-1 py-4 overflow-y-auto">
-          {MENU.map(item => {
-            const active = route.name === item.route
+        <nav className="flex-1 py-2 overflow-y-auto">
+          {MENU.map((item, idx) => {
+            const active = !!item.route && activeRoute === item.route
+            const clickable = !!item.route
+
+            if (item.level === 1) {
+              /* ── 서브 아이템 ── */
+              if (active) {
+                return (
+                  <div key={idx} className="px-[5px] py-[5px]">
+                    <button
+                      type="button"
+                      onClick={() => item.route && go({ name: item.route } as Parameters<typeof go>[0])}
+                      className="w-full h-[38px] flex items-center gap-[14px] pl-[26px] bg-[#F1F1F1] rounded-[5px]"
+                    >
+                      <span className="w-[20px] h-[20px] rounded-[3px] bg-[#005744] flex-shrink-0" />
+                      <span className="text-[15px] font-medium text-[#343A40]">{item.label}</span>
+                    </button>
+                  </div>
+                )
+              }
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => clickable && go({ name: item.route! } as Parameters<typeof go>[0])}
+                  className={`w-full h-[48px] flex items-center gap-[14px] pl-9 text-[15px] font-medium text-[#B5B5B5] ${clickable ? 'hover:bg-[#F9F9F9] hover:text-[#555]' : 'cursor-default'} transition-colors`}
+                >
+                  <span className="w-[20px] h-[20px] rounded-[3px] bg-[#B5B5B5] flex-shrink-0" />
+                  {item.label}
+                </button>
+              )
+            }
+
+            /* ── 최상위 아이템 ── */
             return (
               <button
-                key={item.route}
+                key={idx}
                 type="button"
-                onClick={() => go({ name: item.route } as Parameters<typeof go>[0])}
-                className={`w-full flex items-center gap-3 px-6 py-[14px] text-[15px] font-medium text-left transition-colors ${
+                onClick={() => clickable && go({ name: item.route! } as Parameters<typeof go>[0])}
+                className={`w-full h-[48px] flex items-center gap-[14px] pl-[18px] pr-3 text-[15px] font-medium transition-colors ${
                   active
-                    ? 'bg-[#F3F3F3] text-[#000000] font-semibold'
-                    : 'text-[#B5B5B5] hover:bg-[#F9F9F9] hover:text-[#555]'
+                    ? 'bg-[#F3F3F3] text-[#000000]'
+                    : `text-[#B5B5B5] ${clickable ? 'hover:bg-[#F9F9F9] hover:text-[#555]' : 'cursor-default'}`
                 }`}
               >
-                <MenuIcon active={active} />
-                {item.label}
+                <span className={`w-[20px] h-[20px] rounded-[3px] flex-shrink-0 ${active ? 'bg-[#B4B4B4]' : 'bg-[#B5B5B5]'}`} />
+                <span className="flex-1 text-left">{item.label}</span>
+                {item.hasChevron && (
+                  <svg width="12" height="8" viewBox="0 0 12 8" fill="none" className="flex-shrink-0">
+                    <path d="M1 1L6 6L11 1" stroke="#919191" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
               </button>
             )
           })}
@@ -63,9 +112,7 @@ export default function Layout({ children, title }: { children: ReactNode; title
             {title ?? '대시보드'}
           </span>
           <div className="flex items-center gap-4">
-            <span className="text-[14px] text-[#727272]">
-              {user?.name} 님
-            </span>
+            <span className="text-[14px] text-[#727272]">{user?.name} 님</span>
             <span className="text-[13px] text-[#727272]">와우키키 admin</span>
             <button
               type="button"
@@ -83,11 +130,5 @@ export default function Layout({ children, title }: { children: ReactNode; title
         </main>
       </div>
     </div>
-  )
-}
-
-function MenuIcon({ active }: { active: boolean }) {
-  return (
-    <span className={`w-[6px] h-[6px] rounded-full flex-shrink-0 ${active ? 'bg-[#005744]' : 'bg-[#DEDEDE]'}`} />
   )
 }

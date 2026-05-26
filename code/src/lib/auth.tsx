@@ -11,11 +11,14 @@ export type CurrentUser = {
   institutionCode: string
   department?: string | null
   schedule?: string | null
+  approvalStatus?: 'pending' | 'rejected'
+  rejectTitle?: string
+  rejectReason?: string
 }
 
 type AuthValue = {
   user: CurrentUser | null
-  login: (role: Role, id: string, password: string) => Promise<{ ok: boolean; error?: string; rejected?: boolean }>
+  login: (role: Role, id: string, password: string) => Promise<{ ok: boolean; error?: string }>
   logout: () => void
 }
 
@@ -53,19 +56,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return
     api.me()
       .then((dto) => {
+        const fresh = dto as typeof dto & { approvalStatus?: 'pending' | 'rejected'; rejectTitle?: string; rejectReason?: string }
         setUser(prev => {
           if (
             prev &&
-            prev.id === dto.id &&
-            prev.code === dto.code &&
-            prev.name === dto.name &&
-            prev.role === dto.role &&
-            prev.institutionCode === dto.institutionCode
-          ) return prev  // 변경 없으면 리렌더링 방지
+            prev.id === fresh.id &&
+            prev.code === fresh.code &&
+            prev.name === fresh.name &&
+            prev.role === fresh.role &&
+            prev.institutionCode === fresh.institutionCode &&
+            prev.approvalStatus === fresh.approvalStatus
+          ) return prev
           const updated: CurrentUser = {
-            id: dto.id, code: dto.code, name: dto.name, role: dto.role,
-            institutionCode: dto.institutionCode,
-            department: dto.department, schedule: dto.schedule
+            id: fresh.id, code: fresh.code, name: fresh.name, role: fresh.role,
+            institutionCode: fresh.institutionCode,
+            department: fresh.department, schedule: fresh.schedule,
+            approvalStatus: fresh.approvalStatus,
+            rejectTitle: fresh.rejectTitle,
+            rejectReason: fresh.rejectReason,
           }
           saveUser(updated)
           return updated
@@ -85,25 +93,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const dto = (await res.json()) as {
           id: string; code: string | null; name: string; role: Role
           institutionCode: string; department: string | null; schedule: string | null
+          approvalStatus?: 'pending' | 'rejected'; rejectTitle?: string; rejectReason?: string
         }
         const u: CurrentUser = {
           id: dto.id, code: dto.code, name: dto.name, role: dto.role,
           institutionCode: dto.institutionCode,
-          department: dto.department, schedule: dto.schedule
+          department: dto.department, schedule: dto.schedule,
+          approvalStatus: dto.approvalStatus,
+          rejectTitle: dto.rejectTitle, rejectReason: dto.rejectReason,
         }
         saveUser(u)
         setUser(u)
         return { ok: true }
       }
-      const data = await res.json().catch(() => ({})) as { error?: string; id?: string; name?: string; instt_code?: string }
-      if (res.status === 403) {
-        if (data.error === '반려') {
-          sessionStorage.setItem('rejected_user', JSON.stringify({ id: data.id, name: data.name, institutionCode: data.instt_code }))
-          return { ok: false, rejected: true }
-        }
-        return { ok: false, error: data.error ?? LOGIN_FAIL_MSG }
-      }
-      if (res.status === 401) {
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      if (res.status === 401 || res.status === 403) {
         return { ok: false, error: data.error ?? LOGIN_FAIL_MSG }
       }
       return { ok: false, error: LOGIN_FAIL_MSG }

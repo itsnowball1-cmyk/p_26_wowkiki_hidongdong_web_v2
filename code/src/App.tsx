@@ -32,6 +32,9 @@ import SignupFormPage from './pages/SignupFormPage'
 import AdminSignupFormPage from './pages/AdminSignupFormPage'
 import SignupRejectedPage from './pages/SignupRejectedPage'
 import SignupSupplementPage from './pages/SignupSupplementPage'
+import InstitutionPendingPage from './pages/InstitutionPendingPage'
+import InstitutionRejectedPage from './pages/InstitutionRejectedPage'
+import IadminSupplementPage from './pages/IadminSupplementPage'
 import { RouterProvider, useRouter } from './lib/router'
 import { AuthProvider, useAuth } from './lib/auth'
 
@@ -68,6 +71,23 @@ function Routes() {
     if (route.name === 'signup-rejected') return <SignupRejectedPage />
     if (route.name === 'signup-supplement') return <SignupSupplementPage />
     return <LoginPage />
+  }
+
+  // 기관 승인 대기 중
+  if (user.approvalStatus === 'pending') {
+    if (route.name === 'support-list') return <SupportList />
+    if (route.name === 'support-new') return <SupportNew />
+    if (route.name === 'support-detail') return <SupportDetail id={route.id} />
+    return <InstitutionPendingPage />
+  }
+
+  // 기관 인증 반려
+  if (user.approvalStatus === 'rejected') {
+    if (route.name === 'iadmin-supplement') return <IadminSupplementPage />
+    if (route.name === 'support-list') return <SupportList />
+    if (route.name === 'support-new') return <SupportNew />
+    if (route.name === 'support-detail') return <SupportDetail id={route.id} />
+    return <InstitutionRejectedPage />
   }
 
   // 공통 라우트 (모든 역할)

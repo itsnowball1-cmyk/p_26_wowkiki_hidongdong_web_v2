@@ -3,7 +3,13 @@ import Layout from '../components/Layout'
 
 const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
 
-const NOTICE_TYPES = ['전체 공지', '회원가입 반려', '서비스 안내', '시스템 점검', '업데이트']
+const NOTICE_TYPES: { value: string; label: string }[] = [
+  { value: '1', label: '전체 공지' },
+  { value: '2', label: '회원가입 반려' },
+  { value: '3', label: '서비스 안내' },
+  { value: '4', label: '시스템 점검' },
+  { value: '5', label: '업데이트' },
+]
 
 type FormState = {
   is_pinned: boolean
@@ -14,7 +20,7 @@ type FormState = {
   status: 'public' | 'private'
 }
 
-export default function NoticesWriteForm({ onBack }: { onBack: () => void }) {
+export default function NoticesWriteForm({ onBack }: { onBack: (saved?: boolean) => void }) {
   const [form, setForm] = useState<FormState>({
     is_pinned: false,
     target_roles: [],
@@ -51,15 +57,19 @@ export default function NoticesWriteForm({ onBack }: { onBack: () => void }) {
       }),
     })
     setSaving(false)
-    if (res.ok) onBack()
-    else alert('저장에 실패했습니다.')
+    if (res.ok) {
+      onBack(true)
+    } else {
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      alert(`저장 실패 (${res.status}): ${data.error ?? '알 수 없는 오류'}`)
+    }
   }
 
   return (
     <Layout title="공지/FAQ">
       {/* 목록으로 돌아가기 */}
       <div className="flex justify-end mb-4">
-        <button type="button" onClick={onBack} className="text-[12px] text-[#000000] hover:text-[#005744] transition">
+        <button type="button" onClick={() => onBack()} className="text-[12px] text-[#000000] hover:text-[#005744] transition">
           목록으로 돌아가기&gt;
         </button>
       </div>
@@ -111,7 +121,7 @@ export default function NoticesWriteForm({ onBack }: { onBack: () => void }) {
             className="h-[34px] px-3 border border-[#B1B1B1] rounded-[3px] text-[15px] text-[#585858] outline-none bg-white min-w-[180px]"
           >
             <option value="">선택</option>
-            {NOTICE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            {NOTICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </FormRow>
 
@@ -181,7 +191,7 @@ export default function NoticesWriteForm({ onBack }: { onBack: () => void }) {
         </button>
         <button
           type="button"
-          onClick={onBack}
+          onClick={() => onBack()}
           className="w-[220px] h-[58px] border border-[#005744] text-[#005744] text-[18px] font-semibold rounded-[10px] hover:bg-[#005744] hover:text-white transition-colors"
         >
           취소

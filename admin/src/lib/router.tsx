@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 export type RouteName =
   | 'login' | 'dashboard' | 'institutions' | 'institution-detail'
-  | 'children' | 'stats' | 'notices' | 'security'
+  | 'children' | 'stats' | 'notices' | 'faq' | 'cs' | 'sms-settings' | 'security'
   | 'content' | 'versions' | 'data' | 'mypage'
 
 type Route =
@@ -13,13 +13,16 @@ type Route =
   | { name: 'children' }
   | { name: 'stats' }
   | { name: 'notices' }
+  | { name: 'faq' }
+  | { name: 'cs' }
+  | { name: 'sms-settings' }
   | { name: 'security' }
   | { name: 'content' }
   | { name: 'versions' }
   | { name: 'data' }
   | { name: 'mypage' }
 
-type RouterValue = { route: Route; go: (r: Route) => void }
+type RouterValue = { route: Route; go: (r: Route) => void; navKey: number }
 
 const RouterContext = createContext<RouterValue | null>(null)
 
@@ -29,6 +32,9 @@ function parseHash(hash: string): Route {
   if (hash.startsWith('#/children'))     return { name: 'children' }
   if (hash.startsWith('#/stats'))        return { name: 'stats' }
   if (hash.startsWith('#/notices'))      return { name: 'notices' }
+  if (hash.startsWith('#/faq'))          return { name: 'faq' }
+  if (hash.startsWith('#/cs'))            return { name: 'cs' }
+  if (hash.startsWith('#/sms-settings')) return { name: 'sms-settings' }
   if (hash.startsWith('#/security'))     return { name: 'security' }
   if (hash.startsWith('#/content'))      return { name: 'content' }
   if (hash.startsWith('#/versions'))     return { name: 'versions' }
@@ -45,6 +51,9 @@ function toHash(r: Route): string {
   if (r.name === 'children')     return '#/children'
   if (r.name === 'stats')        return '#/stats'
   if (r.name === 'notices')      return '#/notices'
+  if (r.name === 'faq')          return '#/faq'
+  if (r.name === 'cs')            return '#/cs'
+  if (r.name === 'sms-settings') return '#/sms-settings'
   if (r.name === 'security')     return '#/security'
   if (r.name === 'content')      return '#/content'
   if (r.name === 'versions')     return '#/versions'
@@ -56,13 +65,14 @@ function toHash(r: Route): string {
 
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
+  const [navKey, setNavKey] = useState(0)
   useEffect(() => {
     const fn = () => setRoute(parseHash(window.location.hash))
     window.addEventListener('hashchange', fn)
     return () => window.removeEventListener('hashchange', fn)
   }, [])
-  const go = (next: Route) => { setRoute(next); window.location.hash = toHash(next) }
-  return <RouterContext.Provider value={{ route, go }}>{children}</RouterContext.Provider>
+  const go = (next: Route) => { setRoute(next); setNavKey(k => k + 1); window.location.hash = toHash(next) }
+  return <RouterContext.Provider value={{ route, go, navKey }}>{children}</RouterContext.Provider>
 }
 
 export function useRouter() {
