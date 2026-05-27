@@ -1,0 +1,10 @@
+참고_backend/
+참고_frontend/
+
+# 운영 DB dump 에 개인정보가 포함되어 있어 git 에 올리지 않음.
+# 팀원은 사내 공유 채널에서 받아 프로젝트 루트에 둘 것.
+dump-*.sql
+backup/
+
+# Claude Code 작업 디렉터리 (lock 파일이 열려 있어 git add 시 권한오류 유발)
+.claude/

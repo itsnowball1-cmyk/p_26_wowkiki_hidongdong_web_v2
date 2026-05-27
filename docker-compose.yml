@@ -1,0 +1,33 @@
+services:
+  db:
+    image: mariadb:10.3
+    container_name: hidongdong-db
+    restart: unless-stopped
+    environment:
+      # MariaDB 10.3 이미지는 MYSQL_* prefix 만 인식 (MARIADB_* 는 10.4+)
+      MYSQL_ROOT_PASSWORD: localdev
+      MYSQL_DATABASE: wowkiki
+    ports:
+      # 호스트 포트 충돌이 나면 좌측만 바꾸세요 (예: "3307:3306")
+      # 그 경우 code/.dev.vars 의 DB_PORT 도 함께 변경
+      - "3306:3306"
+    volumes:
+      - hidongdong-db-data:/var/lib/mysql
+      # dump 는 /tmp 에만 두고, init.sh 에서 sed 로 정리 후 import 한다 (운영 데이터)
+      - ./backup/dump-wowkiki-202605271543.sql:/tmp/dump.sql:ro
+      - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      # 운영 dump 임포트 후 로컬 스키마 보강 (approval_status 등)
+      - ./db/migration.sql:/docker-entrypoint-initdb.d/02-migration.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      # healthcheck.sh 는 기본 credential 만 사용해서 root 비번 설정시 실패함.
+      # mysqladmin ping 으로 직접 확인.
+      test: ["CMD-SHELL", "mysqladmin --user=root --password=$$MYSQL_ROOT_PASSWORD ping --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  hidongdong-db-data:
