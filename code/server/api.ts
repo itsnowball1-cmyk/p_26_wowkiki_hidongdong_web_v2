@@ -148,8 +148,11 @@ function parseAnalysislog(raw: string | null): {
   trained_sound: string | null
   tags_json: string | null
   try_count: number | null
+  consonant_pct: number | null      // 자음정확도 (UTAP_PCC)
+  word_pos_pct: number | null       // 단어 내 위치별 자음 정확도 (TOTAL_PCC)
+  vowel_pct: number | null          // 모음정확도 (PVC)
 } {
-  const empty = { duration_label: null, duration_minutes: null, accuracy_pct: null, summary: null, trained_sound: null, tags_json: null, try_count: null }
+  const empty = { duration_label: null, duration_minutes: null, accuracy_pct: null, summary: null, trained_sound: null, tags_json: null, try_count: null, consonant_pct: null, word_pos_pct: null, vowel_pct: null }
   if (!raw) return empty
   try {
     const log = JSON.parse(raw) as {
@@ -161,6 +164,8 @@ function parseAnalysislog(raw: string | null): {
 
     const pcc = stats.find(s => s.stts_id === 'TOTAL_PCC')
     const accuracy_pct = pcc ? Math.round(pcc.score) : null
+    const utapStat = stats.find(s => s.stts_id === 'UTAP_PCC')
+    const pvcStat  = stats.find(s => s.stts_id === 'PVC')
 
     const posLabel = POS_LABEL[summ.aim_pos ?? ''] ?? summ.aim_pos ?? ''
     const sound = posLabel && summ.aim_joum ? `${posLabel} ${summ.aim_joum}` : null
@@ -173,7 +178,10 @@ function parseAnalysislog(raw: string | null): {
       summary:          sound,
       trained_sound:    sound,
       tags_json:        summ.act_type ? JSON.stringify([summ.act_type]) : null,
-      try_count:        stats.find(s => s.stts_id === 'TOTAL_PCC')?.ttl_cnt ?? null
+      try_count:        stats.find(s => s.stts_id === 'TOTAL_PCC')?.ttl_cnt ?? null,
+      consonant_pct:    utapStat ? Math.round(utapStat.score) : null,
+      word_pos_pct:     pcc ? Math.round(pcc.score) : null,
+      vowel_pct:        pvcStat ? Math.round(pvcStat.score) : null
     }
   } catch {
     return empty
@@ -218,17 +226,28 @@ type StatEntry = {
   attr?: string; ttl_cnt?: number; crct_cnt?: number
 }
 
+// e_list 필드는 두 가지 명명 규칙이 데이터에 공존:
+//   풀네임(aim_joum/ch_joum/e_ctgr/e_attr) 과 축약형(a_jm/c_jm/ctgr/attr).
+type MispronErr = {
+  pos: string
+  aim_joum?: string; a_jm?: string
+  ch_joum?: string;  c_jm?: string
+  e_ctgr?: string;   ctgr?: string
+  e_attr?: string;   attr?: string
+}
 type MispronEntry = {
   qz_nth: number; word: string; pron: string; ch_pron: string
-  e_list?: Array<{ pos: string; aim_joum: string; ch_joum: string; e_ctgr: string; e_attr: string }>
+  e_list?: MispronErr[]
 }
+const errJoum = (e: MispronErr) => e.aim_joum || e.a_jm || undefined
+const errCtgr = (e: MispronErr) => e.e_ctgr || e.ctgr || undefined
 
 type DiagDetail = {
   duration_label: string | null
   statistics: [string, string, string, string][]
   revised_statistics: [string, string, string, string][]
   mispronunciations: { word: string; ch_pron: string }[]
-  error_position: { phoneme: string; types: string; positions: string }[]
+  error_position: { phoneme: string; count: number; types: string; positions: string }[]
   error_rank: { rank: number; type: string; ratio: string }[]
   stimulability: unknown[]
 }
@@ -267,20 +286,23 @@ function parseAnalysislogDetail(raw: string | null): DiagDetail {
     const misprons = log.mispronunciations ?? []
     const mispronunciations = misprons.map(m => ({ word: m.word, ch_pron: m.ch_pron }))
 
-    const phonemeMap = new Map<string, { types: Set<string>; positions: Set<string> }>()
+    const phonemeMap = new Map<string, { types: Set<string>; positions: Set<string>; count: number }>()
     for (const m of misprons) {
       for (const e of m.e_list ?? []) {
-        const joum: string | undefined = e.aim_joum || undefined
+        const joum = errJoum(e)
         const posLabel = (e.pos && POS_LABEL[e.pos]) ? POS_LABEL[e.pos] : (e.pos || null)
         if (!joum || !posLabel) continue
-        if (!phonemeMap.has(joum)) phonemeMap.set(joum, { types: new Set(), positions: new Set() })
+        if (!phonemeMap.has(joum)) phonemeMap.set(joum, { types: new Set(), positions: new Set(), count: 0 })
         const entry = phonemeMap.get(joum)!
-        if (e.e_ctgr) entry.types.add(E_CTGR_LABEL[e.e_ctgr] ?? e.e_ctgr)
+        entry.count++   // 음소 등장 횟수 (레퍼런스: cnt>1 일 때 "/ㄱ/ (3)" 표기)
+        const ctgr = errCtgr(e)
+        if (ctgr) entry.types.add(E_CTGR_LABEL[ctgr] ?? ctgr)
         entry.positions.add(posLabel)
       }
     }
     const error_position = [...phonemeMap.entries()].map(([phoneme, d]) => ({
       phoneme: `/${phoneme}/`,
+      count: d.count,
       types: [...d.types].join(', '),
       positions: [...d.positions].join(', ')
     }))
@@ -289,8 +311,9 @@ function parseAnalysislogDetail(raw: string | null): DiagDetail {
     let totalErrors = 0
     for (const m of misprons) {
       for (const e of m.e_list ?? []) {
-        if (!e.e_ctgr) continue
-        const label = E_CTGR_LABEL[e.e_ctgr] ?? e.e_ctgr
+        const ctgr = errCtgr(e)
+        if (!ctgr) continue
+        const label = E_CTGR_LABEL[ctgr] ?? ctgr
         ctgrCount.set(label, (ctgrCount.get(label) ?? 0) + 1)
         totalErrors++
       }
@@ -2139,7 +2162,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       )
       return json((rows as Array<RowDataPacket & { idx: number; act_date: unknown; analysislog: string|null }>).map(r => {
         const p = parseAnalysislog(r.analysislog)
-        return { id: r.idx, examined_at: fmtDateTime(r.act_date), duration_label: p.duration_label, accuracy_pct: p.accuracy_pct, summary: p.summary }
+        return { id: r.idx, examined_at: fmtDateTime(r.act_date), duration_label: p.duration_label, accuracy_pct: p.accuracy_pct, summary: p.summary, consonant_pct: p.consonant_pct, word_pos_pct: p.word_pos_pct, vowel_pct: p.vowel_pct }
       }))
     }
 
@@ -2166,7 +2189,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         const p = parseAnalysislog(r.analysislog)
         return {
           id:               r.idx,
-          treated_at:       fmtDate(r.act_date),
+          treated_at:       fmtDateTime(r.act_date),
           session_no:       trows.length - i,
           trained_sound:    p.trained_sound,
           tags_json:        p.tags_json,
@@ -2347,110 +2370,49 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     }
 
     // GET /api/diagnoses/:id/recordings
+    // 레퍼런스(boffice diag_detail / getStorageFileList)와 동일 규칙:
+    //   tb_data_list(폴더) ↔ tb_data_file 조인, 폴더 내 모든 파일 나열,
+    //   라벨 = source_file_nm(확장자 제외), url = {FILES_BASE_URL}/dataCenter{file_nm}
     const recMatch = path.match(/^\/api\/diagnoses\/(\d+)\/recordings$/)
     if (recMatch && method === 'GET') {
       const did = Number(recMatch[1])
-
-      // speechlog → 단어 순서(qzNth) + 최종 발화 round 번호
-      const [repRows] = await conn.query<RowDataPacket[]>(
-        'SELECT speechlog FROM tb_childact_report WHERE idx = ? LIMIT 1', [did]
-      )
-      const rawLog = (repRows[0] as { speechlog: string | null } | undefined)?.speechlog
-
-      // 이 세션에 업로드된 모든 파일 (bf_idx 오름차순 = 업로드 순서)
       const [fileRows] = await conn.query<RowDataPacket[]>(
-        `SELECT f.file_nm, f.source_file_nm, f.bf_idx
+        `SELECT f.file_nm, f.source_file_nm
          FROM tb_data_list dl
          JOIN tb_data_file f ON f.data_idx = dl.data_idx
          WHERE dl.stfName = ?
          ORDER BY f.bf_idx`,
         [`idx_${did}`]
       )
-
-      if (!rawLog || !fileRows.length) return json([])
-
-      type LogEntry = { qzNth: number; wrd: string; file: string }
-      let logLst: LogEntry[] = []
-      try {
-        logLst = (JSON.parse(rawLog) as { logLst?: LogEntry[] }).logLst ?? []
-      } catch { return json([]) }
-
-      type FileRow = RowDataPacket & { file_nm: string; source_file_nm: string; bf_idx: number }
-      const files = fileRows as FileRow[]
-
-      // 단어별로 파일 그룹핑 (업로드 순서 유지 → index = round-1)
-      const filesByWord = new Map<string, FileRow[]>()
-      for (const f of files) {
-        const word = f.source_file_nm.replace(/\.wav$/i, '')
-        if (!filesByWord.has(word)) filesByWord.set(word, [])
-        filesByWord.get(word)!.push(f)
-      }
-
-      // 파일명 패턴: idx_{reportIdx}_{seq}_{round}_{word}_{pron}.wav
-      // 같은 단어가 여러 번 등장하거나 round 가 2이상일 때를 대비해
-      // 단어별 "소비한 파일 수" 포인터를 사용해 정확한 파일을 선택.
       const base = env.FILES_BASE_URL.replace(/\/$/, '')
-      const wordPointer: Record<string, number> = {}
-      const result = logLst
-        .slice()
-        .sort((a, b) => a.qzNth - b.qzNth)
-        .flatMap((entry, i) => {
-          const roundMatch = entry.file.match(/^idx_\d+_\d+_(\d+)_/)
-          const round = roundMatch ? Number(roundMatch[1]) : 1
-          const wordFiles = filesByWord.get(entry.wrd) ?? []
-          const pointer = wordPointer[entry.wrd] ?? 0
-          // 이번 qzNth 의 최종 발화 파일 = pointer + round - 1
-          const target = pointer + round - 1
-          const fileRow = wordFiles[target] ?? wordFiles[wordFiles.length - 1]
-          // 다음 같은 단어 등장 시 이만큼 건너뜀
-          wordPointer[entry.wrd] = pointer + round
-          if (!fileRow) return []
-          return [{ index: i + 1, word: entry.wrd, url: `${base}/dataCenter${fileRow.file_nm}` }]
-        })
-
+      const result = (fileRows as Array<RowDataPacket & { file_nm: string; source_file_nm: string }>)
+        .filter(f => f.file_nm)
+        .map((f, i) => ({
+          index: i + 1,
+          word: (f.source_file_nm ?? '').replace(/\.[^/.]+$/, ''),
+          url: `${base}/dataCenter${f.file_nm}`
+        }))
       return json(result)
     }
 
     // GET /api/treatments/:id/recordings  (must be before /api/treatments/:id)
+    // 진단 recordings 와 동일 규칙: 폴더 내 모든 파일 나열, url = {FILES_BASE_URL}/dataCenter{file_nm}
     const treatRecMatch = path.match(/^\/api\/treatments\/(\d+)\/recordings$/)
     if (treatRecMatch && method === 'GET') {
       const tid = Number(treatRecMatch[1])
-      const [repRows] = await conn.query<RowDataPacket[]>(
-        `SELECT r.speechlog FROM tb_childact_report r
-         JOIN tb_member c ON c.id = r.id AND c.mtype = 'child' AND c.delete_yn = 'N'
-         WHERE r.idx = ? AND r.use_type = 'training' AND c.instt_code = ?
-         LIMIT 1`, [tid, user.instt_code])
-      const rawLog = (repRows[0] as { speechlog: string | null } | undefined)?.speechlog
       const [fileRows] = await conn.query<RowDataPacket[]>(
-        `SELECT f.file_nm, f.source_file_nm, f.bf_idx
+        `SELECT f.file_nm, f.source_file_nm
          FROM tb_data_list dl
          JOIN tb_data_file f ON f.data_idx = dl.data_idx
          WHERE dl.stfName = ? ORDER BY f.bf_idx`, [`idx_${tid}`])
-      if (!rawLog || !fileRows.length) return json([])
-      type TreatLogEntry = { qzNth: number; wrd: string; file: string }
-      let treatLogLst: TreatLogEntry[] = []
-      try { treatLogLst = (JSON.parse(rawLog) as { logLst?: TreatLogEntry[] }).logLst ?? [] } catch { return json([]) }
-      type TreatFileRow = RowDataPacket & { file_nm: string; source_file_nm: string; bf_idx: number }
-      const treatFiles = fileRows as TreatFileRow[]
-      const treatFilesByWord = new Map<string, TreatFileRow[]>()
-      for (const f of treatFiles) {
-        const word = f.source_file_nm.replace(/\.wav$/i, '')
-        if (!treatFilesByWord.has(word)) treatFilesByWord.set(word, [])
-        treatFilesByWord.get(word)!.push(f)
-      }
       const treatBase = env.FILES_BASE_URL.replace(/\/$/, '')
-      const treatWordPointer: Record<string, number> = {}
-      const treatResult = treatLogLst.slice().sort((a, b) => a.qzNth - b.qzNth).flatMap((entry, i) => {
-        const roundMatch = entry.file.match(/^idx_\d+_\d+_(\d+)_/)
-        const round = roundMatch ? Number(roundMatch[1]) : 1
-        const wordFiles = treatFilesByWord.get(entry.wrd) ?? []
-        const pointer = treatWordPointer[entry.wrd] ?? 0
-        const target = pointer + round - 1
-        const fileRow = wordFiles[target] ?? wordFiles[wordFiles.length - 1]
-        treatWordPointer[entry.wrd] = pointer + round
-        if (!fileRow) return []
-        return [{ index: i + 1, word: entry.wrd, url: `${treatBase}/dataCenter${fileRow.file_nm}` }]
-      })
+      const treatResult = (fileRows as Array<RowDataPacket & { file_nm: string; source_file_nm: string }>)
+        .filter(f => f.file_nm)
+        .map((f, i) => ({
+          index: i + 1,
+          word: (f.source_file_nm ?? '').replace(/\.[^/.]+$/, ''),
+          url: `${treatBase}/dataCenter${f.file_nm}`
+        }))
       return json(treatResult)
     }
 

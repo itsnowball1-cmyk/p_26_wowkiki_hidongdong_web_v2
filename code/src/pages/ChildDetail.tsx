@@ -30,11 +30,7 @@ const FALLBACK_DETAIL: ChildDetailDto = {
   memos: []
 }
 
-const FALLBACK_DIAGNOSES: DiagnosisListItem[] = [
-  { id: 1, examined_at: '2025.11.24', duration_label: '15분 40초', accuracy_pct: 50, summary: '어두초성ㄱ, 어두초성ㄴ, 어두초성ㄷ' },
-  { id: 2, examined_at: '2025.10.27', duration_label: '14분 20초', accuracy_pct: 55, summary: '어두초성ㄱ, 어두초성ㄴ' },
-  { id: 3, examined_at: '2025.10.02', duration_label: '15분 40초', accuracy_pct: 60, summary: '어두초성ㄱ, 어두초성ㄴ' }
-]
+const FALLBACK_DIAGNOSES: DiagnosisListItem[] = []
 
 const FALLBACK_TREATMENTS: TreatmentListItem[] = [
   { id: 1, treated_at: '2025.11.24', session_no: 13, trained_sound: '어두초성 ㅅ', tags_json: '["1음절","룰렛"]',  try_count: 30, avg_accuracy_pct: 45, duration_minutes: 15 },
@@ -480,9 +476,9 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
           </div>
         </div>
         <div className="grid grid-cols-3 gap-3">
-          <MetricBlock label="자음정확도" sub="아동 개인 수치" value="70%" />
-          <MetricBlock label="단어 내 위치별 자음 정확도" sub="아동 개인 수치" value="65%" />
-          <MetricBlock label="모음정확도" sub="아동 개인 수치" value="80%" />
+          <MetricBlock label="자음정확도" sub="아동 개인 수치" value={latest?.consonant_pct != null ? `${latest.consonant_pct}%` : '--'} />
+          <MetricBlock label="단어 내 위치별 자음 정확도" sub="아동 개인 수치" value={latest?.word_pos_pct != null ? `${latest.word_pos_pct}%` : '--'} />
+          <MetricBlock label="모음정확도" sub="아동 개인 수치" value={latest?.vowel_pct != null ? `${latest.vowel_pct}%` : '--'} />
         </div>
       </div>
 
@@ -499,7 +495,8 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
           <thead>
             <tr className="border-b border-line bg-line-soft">
               <Th className="w-10"><span className="sr-only">선택</span></Th>
-              <Th>진단일</Th>
+              <Th>진단일시</Th>
+              <Th>사용시간</Th>
               <Th>정확도</Th>
               <Th>진단 결과 요약</Th>
               <Th className="w-32">상세보기</Th>
@@ -508,7 +505,7 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
           <tbody>
             {diagnoses.length === 0 && (
               <tr>
-                <td colSpan={5} className="h-[80px] text-center text-ink-400">진단 기록이 없습니다.</td>
+                <td colSpan={6} className="h-[80px] text-center text-ink-400">진단 기록이 없습니다.</td>
               </tr>
             )}
             {diagnoses.map((row) => (
@@ -521,6 +518,7 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
                   <input type="checkbox" className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand" />
                 </Td>
                 <Td className="text-ink-850">{row.examined_at}</Td>
+                <Td className="text-ink-850">{row.duration_label ?? '-'}</Td>
                 <Td className="text-ink-850">{row.accuracy_pct != null ? `${row.accuracy_pct}%` : '-'}</Td>
                 <Td className="text-ink-850">{row.summary ?? '-'}</Td>
                 <Td>
@@ -546,7 +544,8 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
 /* 치료 이력                           */
 /* ---------------------------------- */
 function parseTreatedAt(s: string): Date {
-  const [y, m, d] = s.split('.').map(Number)
+  // treated_at 은 'YYYY.MM.DD' 또는 'YYYY.MM.DD HH:MM' 형식 — 날짜 부분만 사용
+  const [y, m, d] = s.split(' ')[0].split('.').map(Number)
   return new Date(y, m - 1, d)
 }
 
@@ -564,7 +563,7 @@ function buildChartData(
     .slice(-7)
 
   const labels = [...filtered].reverse().map(t => {
-    const parts = t.treated_at.split('.')
+    const parts = t.treated_at.split(' ')[0].split('.')
     return parts.length >= 3 ? `${Number(parts[1])}/${Number(parts[2])}` : t.treated_at
   })
   const rev = [...filtered].reverse()
@@ -638,7 +637,7 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
         <table className="w-full min-w-[900px] text-[15px]">
           <thead>
             <tr className="border-b border-line bg-line-soft">
-              <Th>치료일</Th>
+              <Th>치료일시</Th>
               <Th>회기</Th>
               <Th>훈련조음</Th>
               <Th>치료 분야</Th>

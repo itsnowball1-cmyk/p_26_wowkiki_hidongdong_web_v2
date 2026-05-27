@@ -92,6 +92,9 @@ export type DiagnosisListItem = {
   duration_label: string | null
   accuracy_pct: number | null
   summary: string | null
+  consonant_pct: number | null
+  word_pos_pct: number | null
+  vowel_pct: number | null
 }
 
 export type TreatmentListItem = {
@@ -161,7 +164,7 @@ export type DiagnosisDetailDto = {
   statistics: [string, string, string, string][]
   revised_statistics: [string, string, string, string][]
   mispronunciations: { word: string; ch_pron: string }[]
-  error_position: { phoneme: string; types: string; positions: string }[]
+  error_position: { phoneme: string; count: number; types: string; positions: string }[]
   error_rank: { rank: number; type: string; ratio: string }[]
   stimulability: unknown[]
 }

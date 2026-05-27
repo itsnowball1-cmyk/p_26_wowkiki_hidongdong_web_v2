@@ -13,11 +13,11 @@ services:
       - "3306:3306"
     volumes:
       - hidongdong-db-data:/var/lib/mysql
-      # dump 는 /tmp 에만 두고, init.sh 에서 정리 후 import (정식 스키마 + 데이터)
-      # 이 dump 에 승인 워크플로우 스키마(approval_status, tb_institution, tb_approval_history,
-      # tb_license_file, tb_sms_template, tb_sms_verification)가 포함되어 별도 migration 불필요.
-      - ./backup/dump-wowkiki-202605271833.sql:/tmp/dump.sql:ro
+      # 데이터: 271543 (init.sh 가 sandbox 라인 제거 후 import)
+      - ./backup/dump-wowkiki-202605271543.sql:/tmp/dump.sql:ro
       - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      # 스키마: 271833 추가분(tb_member 2컬럼 + 신규 5테이블)을 데이터 적재 후 얹음
+      - ./db/schema-delta.sql:/docker-entrypoint-initdb.d/02-schema-delta.sql:ro
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci

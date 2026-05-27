@@ -29,7 +29,7 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
     revisedMetrics: (diagData?.revised_statistics ?? []) as DiagnosisExportData['revisedMetrics'],
     errorRank: (diagData?.error_rank ?? []).map(r => [r.rank, r.type, r.ratio] as const),
     pronunciationPairs: (diagData?.mispronunciations ?? []).map(m => [m.word, m.ch_pron] as const),
-    errorPosition: (diagData?.error_position ?? []).map(p => [p.phoneme, p.types, p.positions] as const)
+    errorPosition: (diagData?.error_position ?? []).map(p => [p.count > 1 ? `${p.phoneme} (${p.count})` : p.phoneme, p.types, p.positions] as const)
   })
 
   const handleExcel = async () => {
@@ -252,9 +252,9 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {errorPosition.map(({ phoneme, types, positions }) => (
+                      {errorPosition.map(({ phoneme, count, types, positions }) => (
                         <tr key={phoneme}>
-                          <Td>{phoneme}</Td>
+                          <Td>{count > 1 ? `${phoneme} (${count})` : phoneme}</Td>
                           <Td>{types}</Td>
                           <Td>{positions}</Td>
                         </tr>
