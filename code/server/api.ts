@@ -2139,7 +2139,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       )
       return json((rows as Array<RowDataPacket & { idx: number; act_date: unknown; analysislog: string|null }>).map(r => {
         const p = parseAnalysislog(r.analysislog)
-        return { id: r.idx, examined_at: fmtDate(r.act_date), duration_label: p.duration_label, accuracy_pct: p.accuracy_pct, summary: p.summary }
+        return { id: r.idx, examined_at: fmtDateTime(r.act_date), duration_label: p.duration_label, accuracy_pct: p.accuracy_pct, summary: p.summary }
       }))
     }
 
@@ -2208,7 +2208,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            r.idx                                AS id,
            c.idx                                AS child_id,
            c.id                                 AS identifier,
-           DATE_FORMAT(r.act_date, '%Y.%m.%d') AS examined_at,
+           DATE_FORMAT(r.act_date, '%Y.%m.%d %H:%i') AS examined_at,
            r.analysislog
          FROM tb_childact_report r
          JOIN tb_member c ON c.id = r.id AND c.mtype = 'child' AND c.delete_yn = 'N'

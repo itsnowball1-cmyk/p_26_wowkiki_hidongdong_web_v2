@@ -11,10 +11,9 @@ services:
       MYSQL_DATABASE: ${DB_DATABASE:-wowkiki}
     volumes:
       - hidongdong-db-data:/var/lib/mysql
+      # 정식 스키마 + 데이터가 dump 에 포함되어 별도 migration 불필요
       - ./db/dump.sql:/tmp/dump.sql:ro
       - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
-      # dump 임포트 후 스키마 보강 (fresh init 시에만 자동 실행. 기존 볼륨엔 수동 적용)
-      - ./db/migration.sql:/docker-entrypoint-initdb.d/02-migration.sql:ro
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
