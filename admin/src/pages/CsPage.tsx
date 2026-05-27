@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 import { useRouter } from '../lib/router'
 import CsDetailPage from './CsDetailPage'
@@ -22,8 +22,8 @@ type CsItem = {
 const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
 const PAGE_SIZE = 20
 
-export default function CsPage() {
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+export default function CsPage({ initialIdx }: { initialIdx?: number } = {}) {
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(initialIdx ?? null)
   const [items, setItems] = useState<CsItem[]>([])
   const [total, setTotal] = useState(0)
   const [unanswered, setUnanswered] = useState(0)
@@ -33,8 +33,12 @@ export default function CsPage() {
   const [search, setSearch] = useState('')
   const [toast, setToast] = useState('')
   const { navKey } = useRouter()
+  const didMount = useRef(false)
 
-  useEffect(() => { setSelectedIdx(null) }, [navKey])
+  useEffect(() => {
+    if (!didMount.current) { didMount.current = true; return }
+    setSelectedIdx(null)
+  }, [navKey])
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -124,7 +128,8 @@ export default function CsPage() {
             items.map((item, i) => (
               <div
                 key={item.cs_idx}
-                className={`grid grid-cols-[140px_120px_160px_110px_2fr_130px_130px] px-4 h-[52px] items-center text-[15px] text-center ${i < items.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
+                onClick={() => setSelectedIdx(item.cs_idx)}
+                className={`grid grid-cols-[140px_120px_160px_110px_2fr_130px_130px] px-4 h-[52px] items-center text-[15px] text-center cursor-pointer hover:bg-[#F8F8F8] transition-colors ${i < items.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
               >
                 <span className="text-[#585858]">{S_TYPE[item.s_type] ?? item.s_type}</span>
                 <span className="text-[#585858]">{item.name || '-'}</span>
@@ -132,13 +137,7 @@ export default function CsPage() {
                 <span className={item.reply_yn === 'Y' ? 'text-[#484848]' : 'text-[#FF4646]'}>
                   {item.reply_yn === 'Y' ? '답변완료' : '답변대기'}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedIdx(item.cs_idx)}
-                  className="text-[#585858] text-left px-2 truncate hover:text-[#005744] hover:underline w-full"
-                >
-                  {item.s_title}
-                </button>
+                <span className="text-[#585858] text-left px-2 truncate">{item.s_title}</span>
                 <span className="text-[#585858]">{item.regist_date}</span>
                 <span className="text-[#585858]">{item.reply_date || '-'}</span>
               </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '../components/Sidebar'
 import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
@@ -229,51 +229,84 @@ export default function ScheduleList() {
                 </svg>
               </div>
 
-              <ul className="space-y-2">
-                {childrenLoading && Array.from({ length: 4 }).map((_, i) => (
-                  <li key={i}>
-                    <div className="flex items-center gap-3 px-3 py-2.5 rounded-[8px] animate-pulse">
-                      <div className="w-3 h-3 rounded-full bg-line shrink-0" />
-                      <div className="flex-1 space-y-1.5">
-                        <div className="h-3 bg-line rounded w-20" />
-                        <div className="h-2 bg-line rounded w-14" />
-                      </div>
-                    </div>
-                  </li>
-                ))}
-                {!childrenLoading && filteredChildren.length === 0 && (
-                  <li className="text-[12px] text-ink-400 text-center py-4">
-                    {children.length === 0 ? '배정된 아동이 없습니다.' : '검색 결과가 없습니다.'}
-                  </li>
-                )}
-                {!childrenLoading && filteredChildren.map(c => {
-                  const selected = visibleIds.has(c.id)
+              {/* 아동 섹션 헤더 — 전체 선택 체크박스 내장 */}
+              <div>
+                {(() => {
+                  const allSelected = children.length > 0 && children.every(c => visibleIds.has(c.id))
+                  const someSelected = !allSelected && children.some(c => visibleIds.has(c.id))
                   return (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        onClick={() => toggleChild(c.id)}
-                        aria-pressed={selected}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-[8px] border-2 transition-all text-left ${
-                          selected ? 'shadow-sm font-semibold' : 'border-transparent bg-surface opacity-55 hover:opacity-90'
-                        }`}
-                        style={selected ? { backgroundColor: `${c.hex}33`, borderColor: c.hex } : undefined}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (allSelected) setVisibleIds(new Set())
+                        else setVisibleIds(new Set(children.map(c => c.id)))
+                      }}
+                      className="w-full flex items-center gap-3 px-1 py-1.5 rounded-[6px] hover:bg-surface transition-colors"
+                    >
+                      <span
+                        className="w-5 h-5 rounded-[4px] shrink-0 flex items-center justify-center transition-colors"
+                        style={{ backgroundColor: allSelected ? '#555' : someSelected ? '#55555566' : '#55555533' }}
                       >
-                        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: c.hex }} />
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-[13px] text-[#3E3E3E] truncate">{c.child_name ?? c.identifier}</span>
-                          <span className="block text-[10px] text-ink-500 truncate">{c.identifier}</span>
-                        </span>
-                        {selected && (
-                          <svg className="w-4 h-4 shrink-0 text-ink-900" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M3 8l3.5 3.5L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                        {allSelected && (
+                          <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                            <path d="M1 4.5l3 3L10 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
                         )}
-                      </button>
-                    </li>
+                        {someSelected && (
+                          <svg width="9" height="2" viewBox="0 0 9 2" fill="none">
+                            <path d="M1 1h7" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="text-[14px] font-medium text-ink-900">아동</span>
+                    </button>
                   )
-                })}
-              </ul>
+                })()}
+
+                {/* 구분선 */}
+                <div className="mt-1.5 mb-1 border-t border-line" />
+
+                <ul className="space-y-0.5">
+                  {childrenLoading && Array.from({ length: 4 }).map((_, i) => (
+                    <li key={i} className="flex items-center gap-3 px-1 py-2 animate-pulse">
+                      <div className="w-5 h-5 rounded-[4px] bg-line shrink-0" />
+                      <div className="h-3 bg-line rounded w-20" />
+                    </li>
+                  ))}
+                  {!childrenLoading && filteredChildren.length === 0 && (
+                    <li className="text-[12px] text-ink-400 text-center py-4">
+                      {children.length === 0 ? '배정된 아동이 없습니다.' : '검색 결과가 없습니다.'}
+                    </li>
+                  )}
+                  {!childrenLoading && filteredChildren.map(c => {
+                    const selected = visibleIds.has(c.id)
+                    return (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => toggleChild(c.id)}
+                          aria-pressed={selected}
+                          className="w-full flex items-center gap-3 px-1 py-2 rounded-[6px] text-left hover:bg-surface transition-colors"
+                        >
+                          <span
+                            className="w-5 h-5 rounded-[4px] shrink-0 flex items-center justify-center transition-colors"
+                            style={{ backgroundColor: selected ? c.hex : `${c.hex}55` }}
+                          >
+                            {selected && (
+                              <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                                <path d="M1 4.5l3 3L10 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </span>
+                          <span className={`text-[13px] truncate ${selected ? 'text-[#3E3E3E] font-medium' : 'text-ink-400'}`}>
+                            {c.child_name ?? c.identifier}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
             </aside>
 
             {/* Calendar */}
@@ -317,6 +350,26 @@ export default function ScheduleList() {
   )
 }
 
+/* ─── 겹치는 이벤트 그룹핑 ───────────────────────────────────────────────── */
+function groupOverlapping(events: ScheduleItem[]): ScheduleItem[][] {
+  const sorted = [...events].sort(
+    (a, b) => new Date(a.start_datetime).getTime() - new Date(b.start_datetime).getTime()
+  )
+  const groups: { items: ScheduleItem[]; maxEnd: number }[] = []
+  for (const ev of sorted) {
+    const start = new Date(ev.start_datetime).getTime()
+    const end   = new Date(ev.end_datetime).getTime()
+    const hit   = groups.find(g => g.maxEnd > start)
+    if (hit) {
+      hit.items.push(ev)
+      hit.maxEnd = Math.max(hit.maxEnd, end)
+    } else {
+      groups.push({ items: [ev], maxEnd: end })
+    }
+  }
+  return groups.map(g => g.items)
+}
+
 /* ─── Week View ──────────────────────────────────────────────────────────── */
 function WeekView({
   weekDays, hours, events, childById, onEventClick
@@ -324,9 +377,11 @@ function WeekView({
   weekDays: Date[]
   hours: number[]
   events: ScheduleItem[]
-  childById: (idx: number) => (ReturnType<typeof Array.prototype.find> & { hex: string; child_name: string | null; identifier: string }) | undefined
+  childById: (idx: number) => ChildEntry | undefined
   onEventClick: (id: number) => void
 }) {
+  const [openPopover, setOpenPopover] = useState<string | null>(null)
+
   const eventsByDay = useMemo(() => {
     const map = new Map<number, ScheduleItem[]>()
     for (const e of events) {
@@ -339,7 +394,10 @@ function WeekView({
   }, [events])
 
   return (
-    <div className="flex-1 min-w-0 overflow-auto bg-surface-card border border-line rounded-md">
+    <div
+      className="flex-1 min-w-0 overflow-auto bg-surface-card border border-line rounded-md"
+      onClick={() => setOpenPopover(null)}
+    >
       <div className="min-w-[700px]">
         {/* Day headers */}
         <div className="grid grid-cols-[60px_repeat(7,1fr)] sticky top-0 z-10 bg-surface-card border-b border-line">
@@ -363,43 +421,94 @@ function WeekView({
 
           {weekDays.map((_, dayIdx) => {
             const dayEvents = eventsByDay.get(dayIdx) ?? []
+            const groups    = groupOverlapping(dayEvents)
             return (
               <div key={dayIdx} className="relative border-l border-line">
                 {hours.map(h => (
                   <div key={h} className="h-[46px] border-t border-line first:border-t-0" />
                 ))}
-                {dayEvents.map(e => {
-                  const c = childById(e.child_idx)
+                {groups.map((group, groupIdx) => {
+                  const primary  = group[0]
+                  const extras   = group.slice(1)
+                  const c        = childById(primary.child_idx)
                   if (!c) return null
-                  const hex = (c as { hex: string }).hex
-                  const dt = new Date(e.start_datetime)
-                  const dtEnd = new Date(e.end_datetime)
-                  const startH = dt.getHours() + dt.getMinutes() / 60
-                  const endH   = dtEnd.getHours() + dtEnd.getMinutes() / 60
-                  const top    = (startH - START_HOUR) * ROW_HEIGHT
-                  const height = (endH - startH) * ROW_HEIGHT
-                  const timeStr = `${dt.getHours()}:${String(dt.getMinutes()).padStart(2, '0')}`
-                  const isShort = height < 30
-                  const name = (c as { child_name: string | null; identifier: string }).child_name ?? (c as { identifier: string }).identifier
+                  const { hex }  = c
+                  const dt       = new Date(primary.start_datetime)
+                  const dtEnd    = new Date(primary.end_datetime)
+                  const startH   = dt.getHours() + dt.getMinutes() / 60
+                  const endH     = dtEnd.getHours() + dtEnd.getMinutes() / 60
+                  const top      = (startH - START_HOUR) * ROW_HEIGHT
+                  const height   = Math.max((endH - startH) * ROW_HEIGHT - 2, 22)
+                  const timeStr  = `${dt.getHours()}:${String(dt.getMinutes()).padStart(2, '0')}`
+                  const isShort  = height < 30
+                  const name     = c.child_name ?? c.identifier
+                  const key      = `${dayIdx}-${groupIdx}`
+
                   return (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onClick={() => onEventClick(e.id)}
-                      className={`absolute left-1 right-1 rounded-[3px] text-ink-900 hover:opacity-90 transition border-l-4 shadow-sm overflow-hidden text-left ${
-                        isShort ? 'text-[11px] px-2 py-0.5 flex items-center' : 'text-[12px] px-2 py-1'
-                      }`}
-                      style={{
-                        top,
-                        height: Math.max(height - 2, 18),
-                        backgroundColor: `${hex}66`,
-                        borderLeftColor: hex
-                      }}
-                    >
-                      <span className="block truncate leading-tight">
-                        {name} {timeStr}
-                      </span>
-                    </button>
+                    <Fragment key={primary.id}>
+                      {/* 이벤트 카드 */}
+                      <div
+                        className="absolute left-1 right-1 overflow-hidden rounded-[3px] border-l-4 shadow-sm flex items-stretch"
+                        style={{ top, height, borderLeftColor: hex }}
+                      >
+                        {/* 메인 클릭 영역 — 배경색은 여기에만, 배지 시작 지점에서 끊김 */}
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); onEventClick(primary.id) }}
+                          className={`flex-1 min-w-0 text-ink-900 hover:opacity-90 transition text-left ${
+                            isShort ? 'text-[11px] px-2 flex items-center' : 'text-[12px] px-2 py-1'
+                          }`}
+                          style={{ backgroundColor: `${hex}66` }}
+                        >
+                          <span className="block truncate leading-tight">{name} {timeStr}</span>
+                        </button>
+
+                        {/* +N개 배지 */}
+                        {extras.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation()
+                              setOpenPopover(openPopover === key ? null : key)
+                            }}
+                            className="shrink-0 self-center mr-0 text-[11px] bg-black/30 hover:bg-black/50 text-white px-2 py-1 rounded-[4px] font-semibold leading-none"
+                          >
+                            +{extras.length}개
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 팝오버 — overflow-hidden 바깥 형제 요소로 배치 */}
+                      {extras.length > 0 && openPopover === key && (
+                        <div
+                          className="absolute right-1 z-30 bg-white border border-line rounded-[8px] shadow-xl min-w-[170px] py-1 overflow-hidden"
+                          style={{ top, transform: 'translateY(calc(-100% - 4px))' }}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          {group.map(ev => {
+                            const ec   = childById(ev.child_idx)
+                            if (!ec) return null
+                            const edt  = new Date(ev.start_datetime)
+                            const edtE = new Date(ev.end_datetime)
+                            const etS  = `${edt.getHours()}:${String(edt.getMinutes()).padStart(2, '0')}`
+                            const etE  = `${edtE.getHours()}:${String(edtE.getMinutes()).padStart(2, '0')}`
+                            const eName = ec.child_name ?? ec.identifier
+                            return (
+                              <button
+                                key={ev.id}
+                                type="button"
+                                onClick={() => { setOpenPopover(null); onEventClick(ev.id) }}
+                                className="w-full text-left text-[12px] px-3 py-2 hover:bg-surface flex items-center gap-2 transition-colors"
+                              >
+                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: ec.hex }} />
+                                <span className="flex-1 truncate font-medium">{eName}</span>
+                                <span className="text-ink-400 shrink-0 text-[11px]">{etS}~{etE}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </Fragment>
                   )
                 })}
               </div>
@@ -514,79 +623,92 @@ function ScheduleDetailModal({
   onClose: () => void
   onDelete: (id: number) => void
 }) {
-  const formatDt = (iso: string) => {
+  const days = ['일', '월', '화', '수', '목', '금', '토']
+
+  const formatDate = (iso: string) => {
     const d = new Date(iso)
-    const days = ['일', '월', '화', '수', '목', '금', '토']
-    const date = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} (${days[d.getDay()]})`
-    const time = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
-    return { date, time }
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${days[d.getDay()]}요일`
+  }
+  const formatHour = (iso: string) => {
+    const d = new Date(iso)
+    const m = d.getMinutes()
+    return m === 0 ? `${d.getHours()}시` : `${d.getHours()}시 ${String(m).padStart(2, '0')}분`
   }
 
-  const startInfo = detail ? formatDt(detail.start_datetime) : null
-  const endTime   = detail ? new Date(detail.end_datetime) : null
-  const endTimeStr = endTime ? `${endTime.getHours()}:${String(endTime.getMinutes()).padStart(2, '0')}` : ''
-  const typeLabel  = detail?.schedule_type === '1' ? '진료' : '치료'
+  const rows = detail ? [
+    { label: '날짜',    value: formatDate(detail.start_datetime) },
+    { label: '시간',    value: `${formatHour(detail.start_datetime)}~${formatHour(detail.end_datetime)}` },
+    { label: '아동',    value: `${detail.child_name ?? '-'}(${detail.child_member_id})` },
+    { label: '담당의사',  value: detail.doctor_name ?? '-' },
+    { label: '담당치료사', value: detail.therapist_name ?? '-' },
+    { label: '주기',    value: '이번만' },
+  ] : []
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="bg-white rounded-[10px] shadow-xl w-[420px] p-7 relative">
+      <div className="bg-white rounded-[10px] shadow-xl w-[550px] relative">
+        {/* 닫기 버튼 */}
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 w-8 h-8 grid place-items-center text-ink-400 hover:text-ink-900 transition-colors"
+          className="absolute top-8 right-8 grid place-items-center text-ink-400 hover:text-ink-900 transition-colors"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M1 1l12 12M13 1L1 13" strokeLinecap="round" />
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M1 1l13 13M14 1L1 14" />
           </svg>
         </button>
 
-        <h2 className="text-[20px] font-bold text-ink-900 mb-6">일정 정보</h2>
+        {/* 제목 */}
+        <h2 className="text-[18px] font-semibold text-black px-[59px] pt-[52px] pb-[20px]">
+          일정 세부사항
+        </h2>
 
         {loading && (
-          <div className="py-10 text-center text-ink-400 text-[14px]">불러오는 중…</div>
+          <div className="px-[59px] py-12 text-center text-ink-400 text-[14px]">불러오는 중…</div>
         )}
 
         {!loading && detail && (
-          <div className="space-y-4">
-            <InfoRow label="아동">{detail.child_name ?? detail.child_member_id}</InfoRow>
-            <InfoRow label="식별코드">{detail.child_member_id}</InfoRow>
-            <InfoRow label="구분">{typeLabel}</InfoRow>
-            <InfoRow label="날짜">{startInfo!.date}</InfoRow>
-            <InfoRow label="시간">{startInfo!.time} ~ {endTimeStr}</InfoRow>
-            {detail.doctor_name && <InfoRow label="담당의사">{detail.doctor_name}</InfoRow>}
-            {detail.therapist_name && <InfoRow label="담당치료사">{detail.therapist_name}</InfoRow>}
+          <>
+            {/* 테이블 */}
+            <div className="mx-[59px] border border-[#686868] rounded-[2px] overflow-hidden">
+              {rows.map((row, i) => (
+                <div
+                  key={i}
+                  className={`grid grid-cols-[143px_1fr] ${i < rows.length - 1 ? 'border-b border-[#686868]' : ''}`}
+                  style={{ minHeight: '46px' }}
+                >
+                  <div className="bg-[#F5F5F5] border-r border-[#686868] flex items-center px-[35px] text-[15px] font-medium text-black shrink-0">
+                    {row.label}
+                  </div>
+                  <div className="flex items-center px-[37px] text-[15px] text-black">
+                    {row.value}
+                  </div>
+                </div>
+              ))}
+            </div>
 
-            <div className="pt-4 flex gap-3">
+            {/* 버튼 */}
+            <div className="flex justify-center gap-[16px] py-[32px]">
               <button
                 type="button"
-                onClick={onClose}
-                className="flex-1 h-11 rounded-[5px] border border-line text-ink-700 text-[15px] font-medium hover:border-ink-500 transition-colors"
+                className="w-[125px] h-[40px] rounded-[5px] bg-[#005744] text-white text-[15px] font-medium hover:bg-[#004535] transition-colors"
               >
-                닫기
+                편집
               </button>
               <button
                 type="button"
                 onClick={() => onDelete(detail.id)}
-                className="flex-1 h-11 rounded-[5px] bg-brand-danger text-white text-[15px] font-medium hover:opacity-90 transition"
+                className="w-[125px] h-[40px] rounded-[5px] border border-[#005744] text-black text-[15px] font-medium hover:bg-[#005744]/5 transition-colors"
               >
                 삭제
               </button>
             </div>
-          </div>
+          </>
         )}
       </div>
-    </div>
-  )
-}
-
-function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-4">
-      <span className="w-[80px] shrink-0 text-[13px] text-ink-400 pt-0.5">{label}</span>
-      <span className="text-[15px] text-ink-900 font-medium">{children}</span>
     </div>
   )
 }

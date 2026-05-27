@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import BrandLogo from '../components/BrandLogo'
+import { useAuth } from '../lib/auth'
 import { useRouter } from '../lib/router'
 
 type RejectedUser = { id: string; name: string; institutionCode: string }
@@ -16,7 +17,14 @@ function loadRejectedUser(): RejectedUser | null {
 
 export default function SignupSupplementPage() {
   const { go } = useRouter()
-  const [user] = useState<RejectedUser | null>(loadRejectedUser)
+  const { user: authUser, logout } = useAuth()
+
+  // 로그인 상태면 auth에서, 비로그인(가입 직후 반려)이면 sessionStorage에서 가져옴
+  const fromSession = loadRejectedUser()
+  const resolvedUser: RejectedUser | null = authUser
+    ? { id: authUser.id, name: authUser.name, institutionCode: authUser.institutionCode ?? '' }
+    : fromSession
+  const [user] = useState<RejectedUser | null>(resolvedUser)
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -43,6 +51,7 @@ export default function SignupSupplementPage() {
       const data = await res.json() as { ok?: boolean; error?: string }
       if (!res.ok) { setError(data.error ?? '제출에 실패했습니다.'); return }
       sessionStorage.removeItem('rejected_user')
+      if (authUser) logout()
       setSubmitted(true)
     } catch {
       setError('서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.')

@@ -10,21 +10,24 @@ type MenuItemDef = {
 }
 
 const MENU: MenuItemDef[] = [
-  { label: '대시보드',     route: 'dashboard',    level: 0 },
-  { label: '아동관리',     route: 'children',     level: 0, hasChevron: true },
-  { label: '기관/계정',    route: 'institutions', level: 0, hasChevron: true },
-  { label: '통계/로그',    route: 'stats',        level: 0, hasChevron: true },
-  { label: '회원관리',                            level: 0, hasChevron: true },
-  { label: '공지사항',     route: 'notices',      level: 1 },
-  { label: 'FAQ',          route: 'faq',          level: 1 },
+  { label: '대시보드',      route: 'dashboard',    level: 0 },
+  { label: '회원 관리',                                      level: 0, hasChevron: true },
+  { label: '기관',          route: 'institution-entities', level: 1 },
+  { label: '기관관리자',    route: 'institutions',         level: 1 },
+  { label: '의사',          route: 'doctors',      level: 1 },
+  { label: '치료사',        route: 'therapists',   level: 1 },
+  { label: '아동',          route: 'children',     level: 1 },
+  { label: '통계/로그',     route: 'stats',        level: 0, hasChevron: true },
+  { label: '고객센터',                             level: 0, hasChevron: true },
+  { label: '공지사항',      route: 'notices',      level: 1 },
+  { label: 'FAQ',           route: 'faq',          level: 1 },
   { label: '1:1 문의사항',  route: 'cs',           level: 1 },
-  { label: '앱 푸시',                             level: 1 },
-  { label: '문자 설정',    route: 'sms-settings', level: 1 },
-  { label: '보안',         route: 'security',     level: 0, hasChevron: true },
-  { label: '콘텐츠',       route: 'content',      level: 0, hasChevron: true },
-  { label: '버전관리',     route: 'versions',     level: 0, hasChevron: true },
-  { label: '데이터',       route: 'data',         level: 0, hasChevron: true },
-  { label: '마이페이지',   route: 'mypage',       level: 0, hasChevron: true },
+  { label: '앱 푸시',                              level: 1 },
+  { label: '문자 설정',     route: 'sms-settings', level: 1 },
+  { label: '보안',          route: 'security',     level: 0, hasChevron: true },
+  { label: '콘텐츠',        route: 'content',      level: 0, hasChevron: true },
+  { label: '버전관리',      route: 'versions',     level: 0, hasChevron: true },
+  { label: '마이페이지',    route: 'mypage',       level: 0, hasChevron: true },
 ]
 
 export default function Layout({ children, title }: { children: ReactNode; title?: string }) {

@@ -17,6 +17,13 @@ type InstitutionRow = {
   rejected_reason: string
 }
 
+type HistoryItem = {
+  idx: number
+  attempt_number: number
+  source_file_nm: string | null
+  submitted_at: string
+}
+
 type TabCounts = { pending: number; rejected: number; active: number; inactive: number }
 
 const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
@@ -28,7 +35,7 @@ const TABS: { key: TabName; label: string }[] = [
   { key: 'inactive', label: '가입승인취소' },
 ]
 
-type ApproveModal = { idx: number; insttCode: string }
+type ApproveModal = { idx: number; insttCode: string; role: string; existingInsttCode: string }
 type RejectModal  = { idx: number; title: string; reason: string }
 
 export default function InstitutionsPage() {
@@ -44,6 +51,9 @@ export default function InstitutionsPage() {
   const [deactivateLoading, setDeactivateLoading] = useState(false)
   const [approveModal, setApproveModal] = useState<ApproveModal | null>(null)
   const [rejectModal, setRejectModal] = useState<RejectModal | null>(null)
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [fileLoading, setFileLoading] = useState<number | null>(null)
 
   const fetchData = async (t: TabName) => {
     setLoading(true)
@@ -61,6 +71,8 @@ export default function InstitutionsPage() {
   }
 
   useEffect(() => { fetchData(tab) }, [tab])
+  useEffect(() => { if (approveModal) fetchHistory(approveModal.idx) }, [approveModal?.idx])
+  useEffect(() => { if (rejectModal) fetchHistory(rejectModal.idx) }, [rejectModal?.idx])
 
   const doApprove = async (idx: number, instt_code: string) => {
     setActionLoading(idx)
@@ -114,6 +126,38 @@ export default function InstitutionsPage() {
       }
     } finally {
       setDeactivateLoading(false)
+    }
+  }
+
+  const fetchHistory = async (memberIdx: number) => {
+    setHistory([])
+    setHistoryLoading(true)
+    try {
+      const res = await fetch(`/api/admin/approval-history?memberIdx=${memberIdx}`, { headers: HEADERS })
+      if (res.ok) setHistory(await res.json() as HistoryItem[])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const openFile = async (historyIdx: number) => {
+    setFileLoading(historyIdx)
+    try {
+      const res = await fetch(`/api/admin/approval-file?historyIdx=${historyIdx}`, { headers: HEADERS })
+      if (!res.ok) return
+      const data = await res.json() as { source_file_nm: string | null; file_data: string }
+      const byteStr = atob(data.file_data)
+      const bytes = new Uint8Array(byteStr.length)
+      for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i)
+      const nm = data.source_file_nm ?? 'file'
+      const ext = nm.split('.').pop()?.toLowerCase() ?? ''
+      const mime = ext === 'pdf' ? 'application/pdf' : ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'application/octet-stream'
+      const blob = new Blob([bytes], { type: mime })
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank')
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } finally {
+      setFileLoading(null)
     }
   }
 
@@ -287,7 +331,7 @@ export default function InstitutionsPage() {
                 <div className="flex justify-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setApproveModal({ idx: r.idx, insttCode: '' })}
+                    onClick={() => setApproveModal({ idx: r.idx, insttCode: r.role === '치료사' ? r.instt_code : '', role: r.role, existingInsttCode: r.instt_code })}
                     disabled={actionLoading === r.idx}
                     className="w-[60px] h-[28px] rounded-[5px] bg-[#6EBE88] text-white text-[13px] font-medium hover:opacity-80 transition disabled:opacity-50"
                   >승인</button>
@@ -345,7 +389,7 @@ export default function InstitutionsPage() {
                 <div className="flex justify-center">
                   <button
                     type="button"
-                    onClick={() => setApproveModal({ idx: r.idx, insttCode: '' })}
+                    onClick={() => setApproveModal({ idx: r.idx, insttCode: r.role === '치료사' ? r.instt_code : '', role: r.role, existingInsttCode: r.instt_code })}
                     disabled={actionLoading === r.idx}
                     className="w-[60px] h-[28px] rounded-[5px] bg-[#6EBE88] text-white text-[13px] font-medium hover:opacity-80 transition disabled:opacity-50"
                   >승인</button>
@@ -399,19 +443,26 @@ export default function InstitutionsPage() {
         </div>
       )}
 
-      {/* 승인 모달 — 기관코드 입력 */}
+      {/* 승인 모달 */}
       {approveModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-[10px] w-[420px] px-8 py-8 flex flex-col gap-5">
-            <p className="text-[20px] font-bold text-[#2F2E2E]">기관 승인</p>
-            <p className="text-[14px] text-[#585858]">부여할 기관 식별코드를 입력해주세요.</p>
-            <input
-              type="text"
-              value={approveModal.insttCode}
-              onChange={e => setApproveModal({ ...approveModal, insttCode: e.target.value.toUpperCase() })}
-              placeholder="예: HBD, ABC001"
-              className="w-full h-[42px] px-3 border border-[#B1B1B1] rounded-[5px] text-[15px] outline-none focus:border-[#005744]"
-            />
+          <div className="bg-white rounded-[10px] w-[500px] px-8 py-8 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+            <p className="text-[20px] font-bold text-[#2F2E2E]">
+              {approveModal.role === '치료사' ? '치료사 승인' : '기관 승인'}
+            </p>
+            {approveModal.role !== '치료사' && (
+              <>
+                <p className="text-[14px] text-[#585858]">부여할 기관 식별코드를 입력해주세요.</p>
+                <input
+                  type="text"
+                  value={approveModal.insttCode}
+                  onChange={e => setApproveModal({ ...approveModal, insttCode: e.target.value.toUpperCase() })}
+                  placeholder="예: HBD, ABC001"
+                  className="w-full h-[42px] px-3 border border-[#B1B1B1] rounded-[5px] text-[15px] outline-none focus:border-[#005744]"
+                />
+              </>
+            )}
+            <HistorySection history={history} loading={historyLoading} fileLoading={fileLoading} onOpenFile={openFile} />
             <div className="flex gap-4 justify-center mt-2">
               <button
                 type="button"
@@ -432,8 +483,9 @@ export default function InstitutionsPage() {
       {/* 반려 모달 — 제목 + 사유 입력 */}
       {rejectModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-[10px] w-[480px] px-8 py-8 flex flex-col gap-4">
+          <div className="bg-white rounded-[10px] w-[500px] px-8 py-8 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
             <p className="text-[20px] font-bold text-[#2F2E2E]">반려 사유 입력</p>
+            <HistorySection history={history} loading={historyLoading} fileLoading={fileLoading} onOpenFile={openFile} />
             <div className="flex flex-col gap-1">
               <label className="text-[14px] font-medium text-[#585858]">제목</label>
               <input
@@ -471,6 +523,52 @@ export default function InstitutionsPage() {
         </div>
       )}
     </Layout>
+  )
+}
+
+function HistorySection({
+  history, loading, fileLoading, onOpenFile
+}: {
+  history: HistoryItem[]
+  loading: boolean
+  fileLoading: number | null
+  onOpenFile: (idx: number) => void
+}) {
+  const ordinals = ['1번째', '2번째', '3번째', '4번째', '5번째', '6번째', '7번째', '8번째', '9번째', '10번째']
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[14px] font-medium text-[#585858]">제출 이력</p>
+      {loading ? (
+        <p className="text-[13px] text-[#B5B5B5]">불러오는 중…</p>
+      ) : history.length === 0 ? (
+        <p className="text-[13px] text-[#B5B5B5]">제출 이력이 없습니다.</p>
+      ) : (
+        <div className="border border-[#DEDEDE] rounded-[5px] overflow-hidden">
+          {history.map((h, i) => (
+            <div
+              key={h.idx}
+              className={`flex items-center px-4 py-2.5 text-[13px] gap-3 ${i < history.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
+            >
+              <span className="shrink-0 text-[#005744] font-semibold w-[70px]">
+                {ordinals[h.attempt_number - 1] ?? `${h.attempt_number}번째`} 신청
+              </span>
+              <span className="flex-1 truncate text-[#585858]">{h.source_file_nm ?? '-'}</span>
+              <span className="shrink-0 text-[#B5B5B5] text-[12px]">{h.submitted_at}</span>
+              {h.source_file_nm && (
+                <button
+                  type="button"
+                  onClick={() => onOpenFile(h.idx)}
+                  disabled={fileLoading === h.idx}
+                  className="shrink-0 h-[28px] px-3 border border-[#005744] text-[#005744] rounded-[4px] text-[12px] hover:bg-[#005744] hover:text-white transition disabled:opacity-50"
+                >
+                  {fileLoading === h.idx ? '…' : '파일 보기'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

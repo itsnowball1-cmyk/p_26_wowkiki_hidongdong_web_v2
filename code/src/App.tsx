@@ -35,6 +35,7 @@ import SignupSupplementPage from './pages/SignupSupplementPage'
 import InstitutionPendingPage from './pages/InstitutionPendingPage'
 import InstitutionRejectedPage from './pages/InstitutionRejectedPage'
 import IadminSupplementPage from './pages/IadminSupplementPage'
+import TherapistPendingPage from './pages/TherapistPendingPage'
 import { RouterProvider, useRouter } from './lib/router'
 import { AuthProvider, useAuth } from './lib/auth'
 
@@ -73,20 +74,25 @@ function Routes() {
     return <LoginPage />
   }
 
-  // 기관 승인 대기 중
+  // 승인 대기 중
   if (user.approvalStatus === 'pending') {
     if (route.name === 'support-list') return <SupportList />
     if (route.name === 'support-new') return <SupportNew />
     if (route.name === 'support-detail') return <SupportDetail id={route.id} />
+    if (user.role === 'therapist') return <TherapistPendingPage />
     return <InstitutionPendingPage />
   }
 
-  // 기관 인증 반려
+  // 반려
   if (user.approvalStatus === 'rejected') {
-    if (route.name === 'iadmin-supplement') return <IadminSupplementPage />
     if (route.name === 'support-list') return <SupportList />
     if (route.name === 'support-new') return <SupportNew />
     if (route.name === 'support-detail') return <SupportDetail id={route.id} />
+    if (user.role === 'therapist') {
+      if (route.name === 'signup-supplement') return <SignupSupplementPage />
+      return <SignupRejectedPage />
+    }
+    if (route.name === 'iadmin-supplement') return <IadminSupplementPage />
     return <InstitutionRejectedPage />
   }
 

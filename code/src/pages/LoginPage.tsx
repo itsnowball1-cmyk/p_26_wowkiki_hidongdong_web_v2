@@ -52,7 +52,7 @@ export default function LoginPage() {
       setError(result.error ?? '로그인에 실패했습니다.')
       return
     }
-    go({ name: 'list' })
+    go(role === 'admin' ? { name: 'admin-dashboard' } : { name: 'dashboard' })
   }
 
   return (

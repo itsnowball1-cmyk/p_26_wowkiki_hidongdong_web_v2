@@ -1,26 +1,32 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
 export type RouteName =
-  | 'login' | 'dashboard' | 'institutions' | 'institution-detail'
-  | 'children' | 'stats' | 'notices' | 'faq' | 'cs' | 'sms-settings' | 'security'
-  | 'content' | 'versions' | 'data' | 'mypage'
+  | 'login' | 'dashboard' | 'institutions' | 'institution-detail' | 'institution-entities'
+  | 'children' | 'stats' | 'notices' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
+  | 'sms-settings' | 'security' | 'content' | 'versions' | 'data' | 'mypage'
+  | 'therapists' | 'doctors'
 
 type Route =
   | { name: 'login' }
   | { name: 'dashboard' }
   | { name: 'institutions' }
   | { name: 'institution-detail'; id: string }
+  | { name: 'institution-entities' }
   | { name: 'children' }
   | { name: 'stats' }
   | { name: 'notices' }
+  | { name: 'notice-detail'; id: string }
   | { name: 'faq' }
   | { name: 'cs' }
+  | { name: 'cs-detail'; id: string }
   | { name: 'sms-settings' }
   | { name: 'security' }
   | { name: 'content' }
   | { name: 'versions' }
   | { name: 'data' }
   | { name: 'mypage' }
+  | { name: 'therapists' }
+  | { name: 'doctors' }
 
 type RouterValue = { route: Route; go: (r: Route) => void; navKey: number }
 
@@ -28,7 +34,10 @@ const RouterContext = createContext<RouterValue | null>(null)
 
 function parseHash(hash: string): Route {
   if (hash.startsWith('#/institutions/')) return { name: 'institution-detail', id: hash.split('#/institutions/')[1] }
+  if (hash.startsWith('#/institution-entities')) return { name: 'institution-entities' }
   if (hash.startsWith('#/institutions')) return { name: 'institutions' }
+  if (hash.startsWith('#/notice-detail/')) return { name: 'notice-detail', id: hash.split('#/notice-detail/')[1] }
+  if (hash.startsWith('#/cs-detail/')) return { name: 'cs-detail', id: hash.split('#/cs-detail/')[1] }
   if (hash.startsWith('#/children'))     return { name: 'children' }
   if (hash.startsWith('#/stats'))        return { name: 'stats' }
   if (hash.startsWith('#/notices'))      return { name: 'notices' }
@@ -38,6 +47,8 @@ function parseHash(hash: string): Route {
   if (hash.startsWith('#/security'))     return { name: 'security' }
   if (hash.startsWith('#/content'))      return { name: 'content' }
   if (hash.startsWith('#/versions'))     return { name: 'versions' }
+  if (hash.startsWith('#/doctors'))       return { name: 'doctors' }
+  if (hash.startsWith('#/therapists'))    return { name: 'therapists' }
   if (hash.startsWith('#/data'))         return { name: 'data' }
   if (hash.startsWith('#/mypage'))       return { name: 'mypage' }
   if (hash.startsWith('#/dashboard'))    return { name: 'dashboard' }
@@ -47,7 +58,10 @@ function parseHash(hash: string): Route {
 
 function toHash(r: Route): string {
   if (r.name === 'institution-detail') return `#/institutions/${r.id}`
+  if (r.name === 'institution-entities') return '#/institution-entities'
   if (r.name === 'institutions') return '#/institutions'
+  if (r.name === 'notice-detail') return `#/notice-detail/${r.id}`
+  if (r.name === 'cs-detail') return `#/cs-detail/${r.id}`
   if (r.name === 'children')     return '#/children'
   if (r.name === 'stats')        return '#/stats'
   if (r.name === 'notices')      return '#/notices'
@@ -57,6 +71,8 @@ function toHash(r: Route): string {
   if (r.name === 'security')     return '#/security'
   if (r.name === 'content')      return '#/content'
   if (r.name === 'versions')     return '#/versions'
+  if (r.name === 'doctors')       return '#/doctors'
+  if (r.name === 'therapists')    return '#/therapists'
   if (r.name === 'data')         return '#/data'
   if (r.name === 'mypage')       return '#/mypage'
   if (r.name === 'dashboard')    return '#/dashboard'

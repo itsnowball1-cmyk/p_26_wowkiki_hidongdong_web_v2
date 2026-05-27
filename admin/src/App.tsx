@@ -10,6 +10,10 @@ import NoticesPage from './pages/NoticesPage'
 import FAQPage from './pages/FAQPage'
 import CsPage from './pages/CsPage'
 import SmsSettingsPage from './pages/SmsSettingsPage'
+import TherapistsPage from './pages/TherapistsPage'
+import ChildrenDataPage from './pages/ChildrenDataPage'
+import DoctorsDataPage from './pages/DoctorsDataPage'
+import InstitutionEntitiesPage from './pages/InstitutionEntitiesPage'
 import Layout from './components/Layout'
 
 function PlaceholderPage({ title }: { title: string }) {
@@ -35,14 +39,19 @@ function Routes() {
 
   switch (route.name) {
     case 'dashboard':        return <DashboardPage />
-    case 'institutions':     return <InstitutionsPage />
-    case 'institution-detail': return <InstitutionDetailPage id={route.id} />
-    case 'children':         return <PlaceholderPage title="아동관리" />
+    case 'institutions':          return <InstitutionsPage />
+    case 'institution-detail':    return <InstitutionDetailPage id={route.id} />
+    case 'institution-entities':  return <InstitutionEntitiesPage />
+    case 'children':         return <ChildrenDataPage />
     case 'stats':            return <StatsPage />
     case 'notices':          return <NoticesPage />
+    case 'notice-detail':    return <NoticesPage initialIdx={Number(route.id)} />
     case 'faq':              return <FAQPage />
     case 'cs':               return <CsPage />
+    case 'cs-detail':        return <CsPage initialIdx={Number(route.id)} />
     case 'sms-settings':     return <SmsSettingsPage />
+    case 'therapists':       return <TherapistsPage />
+    case 'doctors':          return <DoctorsDataPage />
     case 'security':         return <PlaceholderPage title="보안" />
     case 'content':          return <PlaceholderPage title="콘텐츠" />
     case 'versions':         return <PlaceholderPage title="버전관리" />

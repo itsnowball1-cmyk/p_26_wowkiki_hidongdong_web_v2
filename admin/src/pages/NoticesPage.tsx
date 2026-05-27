@@ -23,9 +23,9 @@ const NOTICE_TYPE_LABELS: Record<string, string> = {
 const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
 const PAGE_SIZE = 20
 
-export default function NoticesPage() {
+export default function NoticesPage({ initialIdx }: { initialIdx?: number } = {}) {
   const [view, setView] = useState<'list' | 'write'>('list')
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(initialIdx ?? null)
   const [toast, setToast] = useState('')
 
   const showToast = (msg: string) => {
