@@ -2,8 +2,7 @@ import { createConnection, type Connection, type RowDataPacket, type ResultSetHe
 
 // ─── 환경 타입 ───────────────────────────────────────────────────────────────
 
-type Env = {
-  ASSETS: Fetcher
+export type Env = {
   DB_HOST: string
   DB_PORT: string
   DB_USER: string
@@ -406,29 +405,28 @@ async function handleLogin(request: Request, conn: Connection): Promise<Response
 
 // ─── 메인 라우터 ─────────────────────────────────────────────────────────────
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url)
+// 정적 파일/SPA 는 nginx 가 서빙하고, 이 핸들러는 /api/* 와 /dataCenter/ 프록시만 처리한다.
+export async function handleRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url)
 
-    // 녹음 파일 프록시: /dataCenter/... → FILES_ORIGIN 서버로 전달
-    if (url.pathname.startsWith('/dataCenter/') && env.FILES_ORIGIN) {
-      const origin = env.FILES_ORIGIN.replace(/\/$/, '')
-      const upstream = `${origin}${url.pathname}`
-      const res = await fetch(upstream)
-      const headers = new Headers()
-      const ct = res.headers.get('content-type')
-      if (ct) headers.set('content-type', ct)
-      headers.set('cache-control', 'public, max-age=86400')
-      headers.set('access-control-allow-origin', '*')
-      return new Response(res.body, { status: res.status, headers })
-    }
-
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request)
-
-    return withConn(env, conn => handleApi(url, request, conn, env))
-      .catch((e: unknown) => err(500, e instanceof Error ? e.message : 'internal error'))
+  // 녹음 파일 프록시: /dataCenter/... → FILES_ORIGIN 서버로 전달
+  if (url.pathname.startsWith('/dataCenter/') && env.FILES_ORIGIN) {
+    const origin = env.FILES_ORIGIN.replace(/\/$/, '')
+    const upstream = `${origin}${url.pathname}`
+    const res = await fetch(upstream)
+    const headers = new Headers()
+    const ct = res.headers.get('content-type')
+    if (ct) headers.set('content-type', ct)
+    headers.set('cache-control', 'public, max-age=86400')
+    headers.set('access-control-allow-origin', '*')
+    return new Response(res.body, { status: res.status, headers })
   }
-} satisfies ExportedHandler<Env>
+
+  if (!url.pathname.startsWith('/api/')) return err(404, 'not found')
+
+  return withConn(env, conn => handleApi(url, request, conn, env))
+    .catch((e: unknown) => err(500, e instanceof Error ? e.message : 'internal error'))
+}
 
 async function handleApi(url: URL, request: Request, conn: Connection, env: Env): Promise<Response> {
   const path   = url.pathname

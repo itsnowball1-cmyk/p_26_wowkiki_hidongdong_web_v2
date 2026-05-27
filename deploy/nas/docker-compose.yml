@@ -1,0 +1,65 @@
+# NAS 배포용 compose. /volume1/docker/hidongdong_web/ 에서 실행됨.
+# .env 가 같은 디렉터리에 있어야 함 (DB 비밀번호 등).
+
+services:
+  db:
+    image: mariadb:10.3
+    container_name: hidongdong-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MYSQL_DATABASE: ${DB_DATABASE:-wowkiki}
+    volumes:
+      - hidongdong-db-data:/var/lib/mysql
+      - ./db/dump.sql:/tmp/dump.sql:ro
+      - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      # dump 임포트 후 스키마 보강 (fresh init 시에만 자동 실행. 기존 볼륨엔 수동 적용)
+      - ./db/migration.sql:/docker-entrypoint-initdb.d/02-migration.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      # healthcheck.sh 는 기본 credential 만 사용해서 root 비번 설정시 실패함.
+      # mysqladmin ping 으로 직접 확인.
+      test: ["CMD-SHELL", "mysqladmin --user=root --password=$$MYSQL_ROOT_PASSWORD ping --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: hidongdong-api
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_DATABASE: ${DB_DATABASE:-wowkiki}
+      FILES_BASE_URL: ${FILES_BASE_URL:-}
+      FILES_ORIGIN: ${FILES_ORIGIN:-}
+      ALIGO_KEY: ${ALIGO_KEY:-}
+      ALIGO_USER_ID: ${ALIGO_USER_ID:-}
+      ALIGO_SENDER: ${ALIGO_SENDER:-}
+      PORT: 4011
+    ports:
+      - "4011:4011"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: hidongdong-web
+    restart: unless-stopped
+    ports:
+      - "3011:80"
+    depends_on:
+      - api
+
+volumes:
+  hidongdong-db-data:
