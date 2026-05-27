@@ -677,10 +677,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         .toISOString().slice(0, 19).replace('T', ' ')
 
       await conn.query(
-        `DELETE FROM sms_verification WHERE phone = ?`, [phone]
+        `DELETE FROM tb_sms_verification WHERE phone = ?`, [phone]
       )
       await conn.query(
-        `INSERT INTO sms_verification (phone, code, expires_at) VALUES (?, ?, ?)`,
+        `INSERT INTO tb_sms_verification (phone, code, expires_at) VALUES (?, ?, ?)`,
         [phone, code, expiresAt]
       )
 
@@ -711,7 +711,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!phone || !code) return err(400, '전화번호와 인증번호를 입력해주세요.')
 
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT id, code, expires_at, verified FROM sms_verification
+        `SELECT id, code, expires_at, verified FROM tb_sms_verification
          WHERE phone = ? ORDER BY id DESC LIMIT 1`,
         [phone]
       )
@@ -721,7 +721,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (new Date(row.expires_at) < new Date()) return err(400, '인증번호가 만료되었습니다. 다시 요청해주세요.')
       if (row.code !== code) return err(400, '인증번호가 동일하지 않습니다.')
 
-      await conn.query(`UPDATE sms_verification SET verified = 1 WHERE id = ?`, [row.id])
+      await conn.query(`UPDATE tb_sms_verification SET verified = 1 WHERE id = ?`, [row.id])
       return json({ ok: true })
     }
 
@@ -1144,7 +1144,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       else                             whereClause = `delete_yn = 'Y'`
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.id, m.name, m.mtype, m.instt_code, m.regist_date, m.update_date, m.admin_memo,
-                i.inst_name
+                i.inst_name, i.inst_type
          FROM tb_member m
          LEFT JOIN tb_institution i ON i.code = m.instt_code
          WHERE ${whereClause} AND m.mtype IN ('iadmin','healler')
@@ -1160,15 +1160,16 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       ) as [RowDataPacket[], unknown]
       return json({
         rows: (rows as RowDataPacket[]).map(r => ({
-          idx:           r.idx,
-          id:            r.id,
-          name:          r.name,
-          inst_name:     r.inst_name ?? '',
-          role:          r.mtype === 'healler' ? '치료사' : '기관관리자',
-          instt_code:    r.instt_code,
-          regist_date:   fmtDate(r.regist_date) ?? '-',
-          rejected_date: fmtDate(r.update_date) ?? '-',
-          rejected_reason: r.admin_memo ?? '-',
+          idx:              r.idx,
+          id:               r.id,
+          name:             r.name,
+          inst_name:        r.inst_name ?? '',
+          role:             r.mtype === 'healler' ? '치료사' : '기관관리자',
+          instt_code:       r.instt_code,
+          instt_type:       r.inst_type ?? '-',
+          regist_date:      fmtDate(r.regist_date) ?? '-',
+          rejected_date:    fmtDate(r.update_date) ?? '-',
+          rejected_reason:  r.admin_memo ?? '-',
         })),
         counts: {
           pending:  Number(cnt?.pending  ?? 0),
@@ -1373,6 +1374,18 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!body.idxs || body.idxs.length === 0) return err(400, '필수 항목 누락')
       await conn.query(
         `UPDATE tb_member SET delete_yn = 'Y', update_date = NOW() WHERE idx IN (${ph(body.idxs.length)})`,
+        body.idxs
+      )
+      return json({ ok: true })
+    }
+
+    // POST /api/admin/institutions/activate — 기관 활성화 (비활성화된 기관 복구)
+    if (path === '/api/admin/institutions/activate' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { idxs?: number[] }
+      if (!body.idxs || body.idxs.length === 0) return err(400, '필수 항목 누락')
+      await conn.query(
+        `UPDATE tb_member SET delete_yn = 'N', update_date = NOW() WHERE idx IN (${ph(body.idxs.length)})`,
         body.idxs
       )
       return json({ ok: true })
@@ -3613,6 +3626,51 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         }))
       } catch { /* ignore schema differences */ }
 
+      return json({ items, total })
+    }
+
+    // GET /api/admin/institution-admins?page=1&limit=20&search=
+    if (path === '/api/admin/institution-admins' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const page = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
+      const search = (url.searchParams.get('search') ?? '').trim()
+      const sClause = search ? `AND (m.name LIKE ? OR m.id LIKE ? OR i.inst_name LIKE ?)` : ''
+      const sArgs = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : []
+      let items: unknown[] = [], total = 0
+      try {
+        const [[cntRow]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_member m
+           LEFT JOIN tb_institution i ON i.code = m.instt_code
+           WHERE m.mtype = 'iadmin' AND m.delete_yn = 'N' ${sClause}`,
+          sArgs
+        ) as [RowDataPacket[], unknown]
+        total = Number(cntRow?.cnt ?? 0)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT m.idx, m.name, m.id, m.instt_code, m.approval_status,
+                  COALESCE(i.inst_name, m.instt_code) AS inst_name,
+                  COALESCE(i.inst_type, '') AS inst_type,
+                  DATE_FORMAT(m.regist_date, '%Y.%m.%d') AS regist_date
+           FROM tb_member m
+           LEFT JOIN tb_institution i ON i.code = m.instt_code
+           WHERE m.mtype = 'iadmin' AND m.delete_yn = 'N' ${sClause}
+           ORDER BY m.regist_date DESC
+           LIMIT ? OFFSET ?`,
+          [...sArgs, limit, (page - 1) * limit]
+        ) as [RowDataPacket[], unknown]
+        items = (rows as RowDataPacket[]).map(r => ({
+          idx:         r.idx,
+          name:        r.name ?? '-',
+          id:          r.id ?? '-',
+          instt_code:  r.instt_code ?? '-',
+          inst_name:   r.inst_name ?? '-',
+          inst_type:   r.inst_type ?? '-',
+          regist_date: r.regist_date ?? '-',
+          status:      r.approval_status === '승인대기' ? '승인대기'
+                     : r.approval_status === '반려'    ? '반려'
+                     : '활성',
+        }))
+      } catch { /* ignore */ }
       return json({ items, total })
     }
 

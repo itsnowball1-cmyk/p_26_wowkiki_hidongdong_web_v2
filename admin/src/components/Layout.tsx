@@ -12,8 +12,8 @@ type MenuItemDef = {
 const MENU: MenuItemDef[] = [
   { label: '대시보드',      route: 'dashboard',    level: 0 },
   { label: '회원 관리',                                      level: 0, hasChevron: true },
-  { label: '기관',          route: 'institution-entities', level: 1 },
-  { label: '기관관리자',    route: 'institutions',         level: 1 },
+  { label: '기관',          route: 'institutions',          level: 1 },
+  { label: '기관 관리자',  route: 'institution-admins',   level: 1 },
   { label: '의사',          route: 'doctors',      level: 1 },
   { label: '치료사',        route: 'therapists',   level: 1 },
   { label: '아동',          route: 'children',     level: 1 },

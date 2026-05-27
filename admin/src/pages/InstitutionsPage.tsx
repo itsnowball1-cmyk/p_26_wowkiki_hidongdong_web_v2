@@ -15,6 +15,7 @@ type InstitutionRow = {
   regist_date: string
   rejected_date: string
   rejected_reason: string
+  deactivated_date?: string
 }
 
 type HistoryItem = {
@@ -31,8 +32,8 @@ const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.
 const TABS: { key: TabName; label: string }[] = [
   { key: 'pending',  label: '신규신청' },
   { key: 'rejected', label: '반려' },
-  { key: 'active',   label: '승인완료' },
-  { key: 'inactive', label: '가입승인취소' },
+  { key: 'active',   label: '활성화 기관' },
+  { key: 'inactive', label: '비활성화 기관' },
 ]
 
 type ApproveModal = { idx: number; insttCode: string; role: string; existingInsttCode: string }
@@ -49,6 +50,8 @@ export default function InstitutionsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [deactivateModal, setDeactivateModal] = useState(false)
   const [deactivateLoading, setDeactivateLoading] = useState(false)
+  const [activateModal, setActivateModal] = useState(false)
+  const [activateLoading, setActivateLoading] = useState(false)
   const [approveModal, setApproveModal] = useState<ApproveModal | null>(null)
   const [rejectModal, setRejectModal] = useState<RejectModal | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
@@ -129,6 +132,25 @@ export default function InstitutionsPage() {
     }
   }
 
+  const handleReactivate = async () => {
+    setActivateLoading(true)
+    try {
+      const res = await fetch('/api/admin/institutions/activate', {
+        method: 'POST',
+        headers: HEADERS,
+        body: JSON.stringify({ idxs: [...selected] })
+      })
+      if (res.ok) {
+        setRows(prev => prev.filter(r => !selected.has(r.idx)))
+        setCounts(prev => ({ ...prev, inactive: prev.inactive - selected.size, active: prev.active + selected.size }))
+        setSelected(new Set())
+        setActivateModal(false)
+      }
+    } finally {
+      setActivateLoading(false)
+    }
+  }
+
   const fetchHistory = async (memberIdx: number) => {
     setHistory([])
     setHistoryLoading(true)
@@ -178,11 +200,10 @@ export default function InstitutionsPage() {
     })
   }
 
-  const isActive   = tab === 'active' || tab === 'inactive'
   const isRejected = tab === 'rejected'
 
   return (
-    <Layout title="기관/계정">
+    <Layout title="기관 승인 관리">
       {/* 탭 */}
       <div className="flex items-baseline gap-10 mb-6">
         {TABS.map(t => {
@@ -212,8 +233,7 @@ export default function InstitutionsPage() {
             <span className="text-[#005744] font-semibold ml-2">{filtered.length}</span>
           </p>
           <div className="flex items-center gap-3">
-            {/* 승인완료/가입승인취소 탭 전용 버튼 */}
-            {isActive && (
+            {tab === 'active' && (
               <>
                 <button
                   type="button"
@@ -230,6 +250,16 @@ export default function InstitutionsPage() {
                   비활성화
                 </button>
               </>
+            )}
+            {tab === 'inactive' && (
+              <button
+                type="button"
+                disabled={selected.size === 0}
+                onClick={() => setActivateModal(true)}
+                className="h-[40px] px-4 bg-[#005744] text-white rounded-[5px] text-[14px] font-medium hover:opacity-90 transition disabled:opacity-40"
+              >
+                활성화
+              </button>
             )}
             <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 text-[14px] text-[#727272] cursor-pointer select-none">
               <span>전체</span>
@@ -253,8 +283,8 @@ export default function InstitutionsPage() {
           </div>
         </div>
 
-        {/* ── 승인완료 / 가입승인취소 탭 ── */}
-        {isActive && (
+        {/* ── 활성화 기관 탭 ── */}
+        {tab === 'active' && (
           <>
             <div className="grid grid-cols-[40px_60px_1fr_120px_160px_140px] px-6 py-3 bg-[#EAEAEA] border-b border-[#DEDEDE] text-[15px] font-medium text-[#343A40]">
               <span className="flex items-center">
@@ -289,6 +319,49 @@ export default function InstitutionsPage() {
                 <span className="text-[#585858]">{r.instt_type || '-'}</span>
                 <span className="text-[#585858]">{r.instt_code}</span>
                 <span className="text-[#585858]">{r.regist_date}</span>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* ── 비활성화 기관 탭 ── */}
+        {tab === 'inactive' && (
+          <>
+            <div className="grid grid-cols-[40px_60px_1fr_120px_160px_140px_140px] px-6 py-3 bg-[#EAEAEA] border-b border-[#DEDEDE] text-[15px] font-medium text-[#343A40]">
+              <span className="flex items-center">
+                <Checkbox checked={allChecked} onChange={toggleAll} />
+              </span>
+              <span>순번</span>
+              <span>기관명</span>
+              <span>기관종류</span>
+              <span>기관 식별코드</span>
+              <span>가입일시</span>
+              <span>비활성화 일시</span>
+            </div>
+            {loading ? (
+              <div className="py-12 text-center text-[14px] text-[#B5B5B5]">불러오는 중…</div>
+            ) : filtered.length === 0 ? (
+              <div className="py-12 text-center text-[14px] text-[#B5B5B5]">데이터가 없습니다.</div>
+            ) : filtered.map((r, i) => (
+              <div
+                key={r.idx}
+                className={`grid grid-cols-[40px_60px_1fr_120px_160px_140px_140px] px-6 py-3 items-center text-[14px] ${
+                  i < filtered.length - 1 ? 'border-b border-[#DEDEDE]' : ''
+                }`}
+              >
+                <span><Checkbox checked={selected.has(r.idx)} onChange={() => toggleOne(r.idx)} /></span>
+                <span className="text-[#585858]">{i + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => go({ name: 'institution-detail', id: String(r.idx) })}
+                  className="text-left text-[#484848] font-medium hover:text-[#005744] transition-colors"
+                >
+                  {r.inst_name || '-'}
+                </button>
+                <span className="text-[#585858]">{r.instt_type || '-'}</span>
+                <span className="text-[#585858]">{r.instt_code}</span>
+                <span className="text-[#585858]">{r.regist_date}</span>
+                <span className="text-[#585858]">{r.rejected_date}</span>
               </div>
             ))}
           </>
@@ -434,6 +507,50 @@ export default function InstitutionsPage() {
               <button
                 type="button"
                 onClick={() => setDeactivateModal(false)}
+                className="w-[125px] h-[40px] rounded-[5px] border border-[#005744] text-[#005744] text-[15px] font-medium hover:bg-[#005744] hover:text-white transition"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 활성화 확인 모달 */}
+      {activateModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-[10px] w-[400px] h-[220px] relative flex flex-col items-center justify-center px-8 gap-4">
+            <button
+              type="button"
+              onClick={() => setActivateModal(false)}
+              className="absolute top-5 right-5 text-[#707070] hover:text-[#333]"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                <path d="M1 1L14 14M14 1L1 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
+            <p className="text-[20px] font-bold text-[#2F2E2E]">기관 활성화</p>
+            <p className="text-[12px] text-[#2F2E2E] text-center leading-[18px]">
+              <span className="font-semibold">
+                {selected.size === 1
+                  ? (filtered.find(r => selected.has(r.idx))?.inst_name ?? '')
+                  : `선택한 ${selected.size}개 기관`}
+              </span>
+              {' '}을 활성화 하시겠습니까?<br/>
+              활성화 시 해당 기관 및 소속 사용자 계정이 즉시 활성 상태로 전환됩니다.
+            </p>
+            <div className="flex gap-4">
+              <button
+                type="button"
+                onClick={handleReactivate}
+                disabled={activateLoading}
+                className="w-[125px] h-[40px] rounded-[5px] bg-[#005744] text-white text-[15px] font-medium hover:opacity-90 transition disabled:opacity-50"
+              >
+                활성화
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivateModal(false)}
                 className="w-[125px] h-[40px] rounded-[5px] border border-[#005744] text-[#005744] text-[15px] font-medium hover:bg-[#005744] hover:text-white transition"
               >
                 취소

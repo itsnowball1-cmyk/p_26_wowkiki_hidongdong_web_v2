@@ -14,6 +14,7 @@ import TherapistsPage from './pages/TherapistsPage'
 import ChildrenDataPage from './pages/ChildrenDataPage'
 import DoctorsDataPage from './pages/DoctorsDataPage'
 import InstitutionEntitiesPage from './pages/InstitutionEntitiesPage'
+import InstitutionAdminsPage from './pages/InstitutionAdminsPage'
 import Layout from './components/Layout'
 
 function PlaceholderPage({ title }: { title: string }) {
@@ -42,6 +43,7 @@ function Routes() {
     case 'institutions':          return <InstitutionsPage />
     case 'institution-detail':    return <InstitutionDetailPage id={route.id} />
     case 'institution-entities':  return <InstitutionEntitiesPage />
+    case 'institution-admins':    return <InstitutionAdminsPage />
     case 'children':         return <ChildrenDataPage />
     case 'stats':            return <StatsPage />
     case 'notices':          return <NoticesPage />
