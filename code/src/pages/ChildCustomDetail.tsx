@@ -507,7 +507,10 @@ export default function ChildCustomDetail({ id }: Props) {
             <h3 className="text-[18px] font-bold text-ink-900">치료 단어 설정</h3>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
               <TargetArticulationPanel />
-              <WordFilterPanel options={filterOptions} setOptions={setFilterOptions} />
+              {(() => {
+                const childAge = detail?.age_label ? Number(detail.age_label.match(/\d+/)?.[0]) : undefined
+                return <WordFilterPanel key={childAge ?? 'na'} childAge={childAge} options={filterOptions} setOptions={setFilterOptions} />
+              })()}
             </div>
 
             <div className="flex justify-center">
@@ -865,12 +868,17 @@ type FilterState = {
   lengthMin: string; lengthMax: string; canRead: '가능' | '불가'
 }
 
-function WordFilterPanel({ options, setOptions }: {
+function WordFilterPanel({ options, setOptions, childAge }: {
   options: Record<string, boolean>
   setOptions: (fn: (prev: Record<string, boolean>) => Record<string, boolean>) => void
+  childAge?: number
 }) {
+  // 단어 적정 나이 기본값: 최소 = max(3, 만나이-2), 최대 = min(10, 만나이+1)
+  const hasAge = childAge != null && !isNaN(childAge)
+  const defaultAgeMin = hasAge ? Math.max(AGE_MIN_BOUND, childAge! - 2) : AGE_MIN_BOUND
+  const defaultAgeMax = hasAge ? Math.min(AGE_MAX_BOUND, childAge! + 1) : AGE_MAX_BOUND
   const [filter, setFilter] = useState<FilterState>({
-    ageMin: AGE_MIN_BOUND, ageMax: AGE_MAX_BOUND,
+    ageMin: defaultAgeMin, ageMax: defaultAgeMax,
     removeMispronounced: options.removeMispronounced, ageAcquired: AGE_ACQUIRED_OPTIONS[0],
     removeNonNoun: options.removeNonNoun, removeClosed: options.removeClosed,
     lengthMin: '1', lengthMax: '5', canRead: '가능'
