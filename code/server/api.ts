@@ -16,22 +16,22 @@ export type Env = {
 }
 
 // ─── 역할 매핑 ───────────────────────────────────────────────────────────────
-// DB의 mtype ('healler' 오타 포함) ↔ 웹 role 변환
+// DB의 mtype ('teacher' 오타 포함) ↔ 웹 role 변환
 
-type Mtype = 'sadmin' | 'wadmin' | 'iadmin' | 'doctor' | 'healler' | 'child' | 'parent'
+type Mtype = 'sadmin' | 'wadmin' | 'iadmin' | 'doctor' | 'teacher' | 'child' | 'parent'
 type Role  = 'admin' | 'doctor' | 'therapist'
 
-const STAFF_MTYPES: readonly Mtype[] = ['doctor', 'healler', 'iadmin', 'sadmin', 'wadmin']
+const STAFF_MTYPES: readonly Mtype[] = ['doctor', 'teacher', 'iadmin', 'sadmin', 'wadmin']
 
 function mtypeToRole(m: Mtype): Role {
   if (m === 'doctor') return 'doctor'
-  if (m === 'healler') return 'therapist'
+  if (m === 'teacher') return 'therapist'
   return 'admin'
 }
 
 function roleToMtypes(r: Role): string[] {
   if (r === 'doctor')    return ['doctor']
-  if (r === 'therapist') return ['healler']
+  if (r === 'therapist') return ['teacher']
   return ['iadmin', 'sadmin', 'wadmin']
 }
 
@@ -486,7 +486,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       )
       if ((existRows as RowDataPacket[]).length > 0) return err(409, '이미 사용 중인 아이디입니다.')
 
-      const mtype  = role === 'doctor' ? 'doctor' : 'healler'
+      const mtype  = role === 'doctor' ? 'doctor' : 'teacher'
       const prefix = role === 'doctor' ? 'D' : 'T'
 
       // 해당 기관·역할의 마지막 코드 번호 조회 후 +1
@@ -616,7 +616,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!id || !license_file_nm || !license_file_data) return err(400, '필수 항목이 누락되었습니다.')
 
       const [memberRows] = await conn.query<RowDataPacket[]>(
-        `SELECT idx FROM tb_member WHERE id = ? AND mtype = 'healler' AND approval_status = '반려' AND delete_yn = 'N' LIMIT 1`,
+        `SELECT idx FROM tb_member WHERE id = ? AND mtype = 'teacher' AND approval_status = '반려' AND delete_yn = 'N' LIMIT 1`,
         [id]
       )
       const member = memberRows[0] as { idx: number } | undefined
@@ -787,10 +787,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     if (path === '/api/admin/stats' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
       const [[inst]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(DISTINCT instt_code) AS cnt FROM tb_member WHERE mtype IN ('iadmin','doctor','healler') AND delete_yn='N'`
+        `SELECT COUNT(DISTINCT instt_code) AS cnt FROM tb_member WHERE mtype IN ('iadmin','doctor','teacher') AND delete_yn='N'`
       ) as [RowDataPacket[], unknown]
       const [[web]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN ('doctor','healler','iadmin') AND delete_yn='N'`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN ('doctor','teacher','iadmin') AND delete_yn='N'`
       ) as [RowDataPacket[], unknown]
       const [[app]] = await conn.query<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype='child' AND delete_yn='N'`
@@ -814,7 +814,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         idx:        r.idx,
         id:         r.id,
         name:       r.name,
-        role:       r.mtype === 'healler' ? '치료사' : r.mtype === 'iadmin' ? '기관관리자' : r.mtype,
+        role:       r.mtype === 'teacher' ? '치료사' : r.mtype === 'iadmin' ? '기관관리자' : r.mtype,
         instt_code: r.instt_code,
         regist_date: fmtDate(r.regist_date) ?? '-',
       })))
@@ -978,7 +978,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
          FROM tb_member m
          LEFT JOIN tb_institution i ON i.code = m.instt_code
          LEFT JOIN tb_member d ON d.code = m.doctor_code AND d.mtype = 'doctor'
-         LEFT JOIN tb_member t ON t.code = m.teacher_code AND t.mtype = 'healler'
+         LEFT JOIN tb_member t ON t.code = m.teacher_code AND t.mtype = 'teacher'
          WHERE ${whereClause}${searchClause}
          ORDER BY m.regist_date DESC
          LIMIT ? OFFSET ?`,
@@ -1011,9 +1011,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const limit  = 20
       const offset = (page - 1) * limit
 
-      let whereClause = `m.mtype = 'healler' AND m.delete_yn = 'N'`
-      if (status === 'inactive') whereClause = `m.mtype = 'healler' AND m.delete_yn = 'Y'`
-      else if (status === 'all') whereClause = `m.mtype = 'healler'`
+      let whereClause = `m.mtype = 'teacher' AND m.delete_yn = 'N'`
+      if (status === 'inactive') whereClause = `m.mtype = 'teacher' AND m.delete_yn = 'Y'`
+      else if (status === 'all') whereClause = `m.mtype = 'teacher'`
 
       const searchParams: string[] = []
       let searchClause = ''
@@ -1023,11 +1023,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         searchParams.push(s, s, s)
       }
 
-      // child count subquery — healler_code 컬럼 없을 수도 있으므로 확인
+      // child count subquery — teacher_code 컬럼 없을 수도 있으므로 확인
       let childCountExpr = 'NULL'
       try {
-        await conn.query(`SELECT healler_code FROM tb_member LIMIT 0`)
-        childCountExpr = `(SELECT COUNT(*) FROM tb_member c WHERE c.mtype='child' AND c.healler_code=m.code AND c.delete_yn='N')`
+        await conn.query(`SELECT teacher_code FROM tb_member LIMIT 0`)
+        childCountExpr = `(SELECT COUNT(*) FROM tb_member c WHERE c.mtype='child' AND c.teacher_code=m.code AND c.delete_yn='N')`
       } catch { /* 컬럼 없음 */ }
 
       const [[{ total }]] = await conn.query<RowDataPacket[]>(
@@ -1067,7 +1067,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const body = (await request.json().catch(() => ({}))) as { idxs?: number[] }
       if (!body.idxs || body.idxs.length === 0) return err(400, '필수 항목 누락')
       const [memberRows] = await conn.query<RowDataPacket[]>(
-        `SELECT idx, name, phone FROM tb_member WHERE idx IN (${ph(body.idxs.length)}) AND mtype = 'healler' AND approval_status = '승인대기' AND delete_yn = 'N'`,
+        `SELECT idx, name, phone FROM tb_member WHERE idx IN (${ph(body.idxs.length)}) AND mtype = 'teacher' AND approval_status = '승인대기' AND delete_yn = 'N'`,
         body.idxs
       )
       if ((memberRows as RowDataPacket[]).length === 0) return json({ ok: true, approved: 0 })
@@ -1168,7 +1168,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
                 i.inst_name, i.inst_type
          FROM tb_member m
          LEFT JOIN tb_institution i ON i.code = m.instt_code
-         WHERE ${whereClause} AND m.mtype IN ('iadmin','healler')
+         WHERE ${whereClause} AND m.mtype IN ('iadmin','teacher')
          ORDER BY m.regist_date DESC`
       )
       const [[cnt]] = await conn.query<RowDataPacket[]>(
@@ -1177,7 +1177,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            SUM(approval_status = '반려') AS rejected,
            SUM(approval_status IS NULL AND delete_yn = 'N') AS active,
            SUM(delete_yn = 'Y') AS inactive
-         FROM tb_member WHERE mtype IN ('iadmin','healler')`
+         FROM tb_member WHERE mtype IN ('iadmin','teacher')`
       ) as [RowDataPacket[], unknown]
       return json({
         rows: (rows as RowDataPacket[]).map(r => ({
@@ -1185,7 +1185,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
           id:               r.id,
           name:             r.name,
           inst_name:        r.inst_name ?? '',
-          role:             r.mtype === 'healler' ? '치료사' : '기관관리자',
+          role:             r.mtype === 'teacher' ? '치료사' : '기관관리자',
           instt_code:       r.instt_code,
           instt_type:       r.inst_type ?? '-',
           regist_date:      fmtDate(r.regist_date) ?? '-',
@@ -1206,7 +1206,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
       const instt_code = url.searchParams.get('instt_code') ?? ''
       if (!instt_code) return err(400, '필수 항목 누락')
-      const webMtypes = `'doctor','healler','iadmin'`
+      const webMtypes = `'doctor','teacher','iadmin'`
       const q = (mtypes: string, extra: string) => conn.query<RowDataPacket[]>(
         `SELECT
            SUM(regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
@@ -1230,7 +1230,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const metric = url.searchParams.get('metric') ?? 'dau'
       const from   = url.searchParams.get('from') ?? new Date(Date.now() - 90 * 864e5).toISOString().slice(0,10)
       const to     = url.searchParams.get('to')   ?? new Date().toISOString().slice(0,10)
-      const mtypes = type === 'app' ? `'child'` : `'doctor','healler','iadmin'`
+      const mtypes = type === 'app' ? `'child'` : `'doctor','teacher','iadmin'`
       let groupExpr = `DATE(regist_date)`
       let orderExpr = `DATE(regist_date) DESC`
       if (metric === 'wau') { groupExpr = `YEARWEEK(regist_date, 1)`; orderExpr = `YEARWEEK(regist_date, 1) DESC` }
@@ -1256,7 +1256,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     // GET /api/admin/stats-detail — 통계/로그용 MAU/WAU/DAU + 기관리스트
     if (path === '/api/admin/stats-detail' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
-      const webMtypes = `'doctor','healler','iadmin'`
+      const webMtypes = `'doctor','teacher','iadmin'`
       const appMtype  = `'child'`
       const [[webMau]] = await conn.query<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')`
@@ -1354,12 +1354,12 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const role       = url.searchParams.get('role') ?? 'child'
       const status     = url.searchParams.get('status') ?? 'all'
       if (!instt_code) return err(400, '필수 항목 누락')
-      const mtypes = role === 'doctor' ? ['doctor'] : role === 'therapist' ? ['healler'] : ['child']
+      const mtypes = role === 'doctor' ? ['doctor'] : role === 'therapist' ? ['teacher'] : ['child']
       let statusClause = ''
       if (status === 'active')   statusClause = `AND delete_yn = 'N'`
       else if (status === 'inactive') statusClause = `AND delete_yn = 'Y'`
       const isStaff = role === 'doctor' || role === 'therapist'
-      const childCodeCol = role === 'doctor' ? 'doctor_code' : 'healler_code'
+      const childCodeCol = role === 'doctor' ? 'doctor_code' : 'teacher_code'
       let childCountExpr = `NULL`
       if (isStaff) {
         try {
@@ -1672,7 +1672,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (user.mtype === 'doctor') {
         codeWhere = 'AND c.doctor_code = ?'
         codeArgs.push(staffCode)
-      } else if (user.mtype === 'healler') {
+      } else if (user.mtype === 'teacher') {
         codeWhere = 'AND c.teacher_code = ?'
         codeArgs.push(staffCode)
       }
@@ -1769,7 +1769,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (user.mtype === 'doctor') {
         codeWhere = 'AND c.doctor_code = ?'
         codeArgs.push(staffCode)
-      } else if (user.mtype === 'healler') {
+      } else if (user.mtype === 'teacher') {
         codeWhere = 'AND c.teacher_code = ?'
         codeArgs.push(staffCode)
       }
@@ -1797,7 +1797,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
          LEFT JOIN tb_member d
            ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
          LEFT JOIN tb_member t
-           ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+           ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.mtype = 'child'
            AND c.delete_yn = 'N'
            AND c.instt_code = ?
@@ -1838,7 +1838,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       let unassignedWhere: string
       if (user.mtype === 'doctor') {
         unassignedWhere = `AND (c.doctor_code IS NULL OR c.doctor_code = '')`
-      } else if (user.mtype === 'healler') {
+      } else if (user.mtype === 'teacher') {
         unassignedWhere = `AND (c.teacher_code IS NULL OR c.teacher_code = '')`
       } else {
         unassignedWhere = `AND (c.doctor_code IS NULL OR c.doctor_code = '')
@@ -1872,7 +1872,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     // POST /api/children/assign-to-me
     if (path === '/api/children/assign-to-me' && method === 'POST') {
       const isDoctor  = user.mtype === 'doctor'
-      const isHealler = user.mtype === 'healler'
+      const isHealler = user.mtype === 'teacher'
       if (!isDoctor && !isHealler) return err(403, '의사 또는 치료사만 배정할 수 있습니다.')
       const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
       const ids  = body.ids ?? []
@@ -1900,7 +1900,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (user.mtype === 'doctor') {
         codeWhere = 'AND c.doctor_code = ?'
         codeArgs.push(staffCode)
-      } else if (user.mtype === 'healler') {
+      } else if (user.mtype === 'teacher') {
         codeWhere = 'AND c.teacher_code = ?'
         codeArgs.push(staffCode)
       }
@@ -1923,7 +1923,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diagnosis
          FROM tb_member c
          LEFT JOIN tb_member t
-           ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+           ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.mtype = 'child'
            AND c.delete_yn = 'N'
            AND c.instt_code = ?
@@ -1961,7 +1961,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            t.name AS therapist_name,
            d.name AS doctor_name
          FROM tb_member c
-         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
          WHERE c.idx = ? AND c.mtype = 'child' AND c.instt_code = ?
          LIMIT 1`,
@@ -2072,7 +2072,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
          LEFT JOIN tb_member d
            ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
          LEFT JOIN tb_member t
-           ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+           ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.idx = ? AND c.mtype = 'child' AND c.instt_code = ?
          LIMIT 1`,
         [cid, user.instt_code]
@@ -2249,7 +2249,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     if (path === '/api/staff' && method === 'GET') {
       const types = url.searchParams.getAll('type')
       const mtypes = types.flatMap(t =>
-        t === 'doctor' ? ['doctor'] : t === 'therapist' ? ['healler'] : []
+        t === 'doctor' ? ['doctor'] : t === 'therapist' ? ['teacher'] : []
       )
       if (!mtypes.length) return err(400, 'type required')
       const [rows] = await conn.query<RowDataPacket[]>(
@@ -2279,7 +2279,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
           : 'AND s.doctor_code = ?'
         args.push(staffCode)
         if (staffCode !== user.id) args.push(user.id)
-      } else if (user.mtype === 'healler') {
+      } else if (user.mtype === 'teacher') {
         codeWhere = staffCode !== user.id
           ? 'AND (s.teacher_code = ? OR s.teacher_code = ?)'
           : 'AND s.teacher_code = ?'
@@ -2349,9 +2349,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            FROM tb_schedule s
            JOIN tb_member c   ON c.id   = s.child_id      AND c.mtype = 'child'   AND c.delete_yn = 'N'
            LEFT JOIN tb_member sd ON sd.code = s.doctor_code   AND sd.mtype = 'doctor'  AND sd.delete_yn = 'N'
-           LEFT JOIN tb_member st ON st.code = s.teacher_code  AND st.mtype = 'healler' AND st.delete_yn = 'N'
+           LEFT JOIN tb_member st ON st.code = s.teacher_code  AND st.mtype = 'teacher' AND st.delete_yn = 'N'
            LEFT JOIN tb_member cd ON cd.code = c.doctor_code   AND cd.mtype = 'doctor'  AND cd.delete_yn = 'N'
-           LEFT JOIN tb_member ct ON ct.code = c.teacher_code  AND ct.mtype = 'healler' AND ct.delete_yn = 'N'
+           LEFT JOIN tb_member ct ON ct.code = c.teacher_code  AND ct.mtype = 'teacher' AND ct.delete_yn = 'N'
            WHERE s.schedule_id = ? AND s.instt_code = ?
            LIMIT 1`,
           [sid, user.instt_code]
@@ -2606,7 +2606,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
                 d.name AS doctor_name, t.name AS therapist_name
          FROM tb_member c
          LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
-         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.mtype = ? AND c.instt_code = ? AND c.delete_yn = ? ${searchWhere}
          ORDER BY c.regist_date DESC, c.idx DESC`,
         args
@@ -2650,7 +2650,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!ids.length) return json({ deleted: 0 })
       const [result] = await conn.query<ResultSetHeader>(
         `UPDATE tb_member SET delete_yn = 'Y', update_date = NOW()
-         WHERE idx IN (${ph(ids.length)}) AND mtype IN ('doctor', 'healler') AND instt_code = ?`,
+         WHERE idx IN (${ph(ids.length)}) AND mtype IN ('doctor', 'teacher') AND instt_code = ?`,
         [...ids, user.instt_code]
       )
       return json({ deleted: result.affectedRows })
@@ -2696,7 +2696,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
                 t.name AS therapist_name, t.depart_code AS therapist_department
          FROM tb_member c
          LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
-         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.idx = ? AND c.instt_code = ? AND c.mtype = 'child' AND c.delete_yn = 'N'`,
         [cid, user.instt_code]
       )
@@ -2758,7 +2758,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!isAdmin) return err(403, 'admin only')
       const type = url.searchParams.get('type') ?? ''
       const search = url.searchParams.get('search') ?? ''
-      const mtype = type === 'doctor' ? 'doctor' : 'healler'
+      const mtype = type === 'doctor' ? 'doctor' : 'teacher'
       const args: unknown[] = [mtype, user.instt_code, 'N']
       let searchWhere = ''
       if (search) { searchWhere = ' AND (name LIKE ? OR COALESCE(depart_code,\'\') LIKE ?)'; args.push(`%${search}%`, `%${search}%`) }
@@ -2776,7 +2776,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       if (!isAdmin) return err(403, 'admin only')
       const type = url.searchParams.get('type') ?? 'doctor'
       const search = url.searchParams.get('search') ?? ''
-      const mtype = type === 'doctor' ? 'doctor' : 'healler'
+      const mtype = type === 'doctor' ? 'doctor' : 'teacher'
       const args: unknown[] = [mtype, user.instt_code, 'N']
       let searchWhere = ''
       if (search) {
@@ -2831,7 +2831,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
          FROM tb_member c
          LEFT JOIN (SELECT child_id, MIN(start_date) AS start_date FROM tb_schedule WHERE schedule_type='1' AND start_date > NOW() GROUP BY child_id) s_d ON s_d.child_id = c.id
          LEFT JOIN (SELECT child_id, MIN(start_date) AS start_date FROM tb_schedule WHERE schedule_type='2' AND start_date > NOW() GROUP BY child_id) s_t ON s_t.child_id = c.id
-         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'teacher'
          WHERE c.mtype = 'child' AND c.instt_code = ? AND c.delete_yn = 'N' AND ${childWhere}
          ORDER BY c.name`,
         [user.instt_code, m.code]
@@ -2887,7 +2887,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT idx, code, name, depart_code, instt_code, mtype, status_yn, update_date AS deleted_at
          FROM tb_member
-         WHERE mtype IN ('doctor', 'healler') AND instt_code = ? AND delete_yn = 'Y'
+         WHERE mtype IN ('doctor', 'teacher') AND instt_code = ? AND delete_yn = 'Y'
          ORDER BY update_date DESC`,
         [user.instt_code]
       )
@@ -2947,7 +2947,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
                  ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
          FROM tb_member c
          LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
-         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'healler' AND t.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.mtype = ? AND c.instt_code = ? AND c.delete_yn = ? ${statusWhere}${searchWhere}
          ORDER BY c.regist_date DESC, c.idx DESC`,
         args
@@ -2979,12 +2979,12 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const [[statsRows]] = await conn.query<RowDataPacket[]>(
         `SELECT
            SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' THEN 1 ELSE 0 END) AS doc_total,
-           SUM(CASE WHEN mtype='healler' AND delete_yn='N' THEN 1 ELSE 0 END) AS th_total,
+           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' THEN 1 ELSE 0 END) AS th_total,
            SUM(CASE WHEN mtype='child'   AND delete_yn='N' THEN 1 ELSE 0 END) AS ch_total,
            SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS doc_this,
            SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS doc_last,
-           SUM(CASE WHEN mtype='healler' AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS th_this,
-           SUM(CASE WHEN mtype='healler' AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS th_last,
+           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS th_this,
+           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS th_last,
            SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS ch_this,
            SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS ch_last
          FROM tb_member WHERE instt_code = ?`,
@@ -3000,7 +3000,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
         conn.query<RowDataPacket[]>(
           `SELECT idx, code, name, depart_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
-           FROM tb_member WHERE mtype='healler' AND instt_code=? AND delete_yn='N'
+           FROM tb_member WHERE mtype='teacher' AND instt_code=? AND delete_yn='N'
            ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
         conn.query<RowDataPacket[]>(
           `SELECT idx, id AS identifier, name, doctor_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
@@ -3545,7 +3545,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            LEFT JOIN tb_institution i ON i.code = m.instt_code
            WHERE m.instt_code IS NOT NULL AND m.instt_code != ''
              AND m.delete_yn='N' AND m.approval_status IS NULL
-             AND m.mtype IN ('iadmin','doctor','healler','child')
+             AND m.mtype IN ('iadmin','doctor','teacher','child')
              ${sClause}`,
           sArgs
         ) as [RowDataPacket[], unknown]
@@ -3558,14 +3558,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
                   MAX(i.address) AS address,
                   COUNT(DISTINCT CASE WHEN m.mtype='iadmin' THEN m.idx END) AS admin_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='doctor' THEN m.idx END) AS doctor_count,
-                  COUNT(DISTINCT CASE WHEN m.mtype='healler' THEN m.idx END) AS therapist_count,
+                  COUNT(DISTINCT CASE WHEN m.mtype='teacher' THEN m.idx END) AS therapist_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='child' THEN m.idx END) AS child_count,
                   DATE_FORMAT(MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END), '%Y.%m.%d') AS regist_date
            FROM tb_member m
            LEFT JOIN tb_institution i ON i.code = m.instt_code
            WHERE m.instt_code IS NOT NULL AND m.instt_code != ''
              AND m.delete_yn='N' AND m.approval_status IS NULL
-             AND m.mtype IN ('iadmin','doctor','healler','child')
+             AND m.mtype IN ('iadmin','doctor','teacher','child')
              ${sClause}
            GROUP BY m.instt_code
            ORDER BY MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END) DESC
@@ -3637,7 +3637,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     // GET /api/admin/dashboard-data
     if (path === '/api/admin/dashboard-data' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
-      const webMtypes = `'doctor','healler','iadmin'`
+      const webMtypes = `'doctor','teacher','iadmin'`
 
       const [[inst]] = await conn.query<RowDataPacket[]>(
         `SELECT COUNT(DISTINCT instt_code) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL`
@@ -3769,7 +3769,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
           idx:        r.idx,
           name:       r.name,
           inst_name:  r.inst_name ?? '',
-          role:       r.mtype === 'healler' ? '치료사' : r.mtype === 'iadmin' ? '기관관리자' : r.mtype,
+          role:       r.mtype === 'teacher' ? '치료사' : r.mtype === 'iadmin' ? '기관관리자' : r.mtype,
           instt_code: r.instt_code,
           regist_date: r.regist_date,
         })),
