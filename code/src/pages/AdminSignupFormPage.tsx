@@ -236,17 +236,13 @@ export default function AdminSignupFormPage() {
               <path d="M34 60l18 18 34-34" stroke="#005744" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-          <h2 className="text-[35px] font-bold text-black mb-3 leading-[50px]">
-            기관 관리자 회원가입 완료
+          <h2 className="text-[35px] font-bold text-black mb-6 leading-[50px]">
+            관리자 회원가입 완료
           </h2>
-          <p className="text-[15px] text-[#141414] mb-8">
-            회원가입이 성공적으로 완료되었습니다.
+          <p className="text-[15px] text-[#141414] leading-[22px] mb-8 text-center">
+            기관 인증 절차가 진행됩니다.<br />
+            절차 완료 후 담당자에게 메시지를 통해 별도로 안내드릴 예정입니다.
           </p>
-          <div className="w-[460px] rounded-[10px] bg-[#EAF3EA] px-8 py-6 text-[15px] text-[#141414] leading-[26px] text-center mb-8">
-            <p className="font-bold text-[16px] mb-2">기관 코드</p>
-            <p className="text-[28px] font-bold text-[#005744] tracking-widest mb-3">{generatedCode}</p>
-            <p className="text-[13px] text-[#444]">의사·치료사 직원들이 회원가입 시 이 코드를 사용해야 합니다.</p>
-          </div>
           <button
             type="button"
             onClick={() => go({ name: 'login' })}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 
 type Template = {
@@ -7,7 +7,7 @@ type Template = {
   template_body: string
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 
 const VARIABLE_HINTS: Record<string, string[]> = {
   approve: ['{name}', '{inst_name}', '{instt_code}'],

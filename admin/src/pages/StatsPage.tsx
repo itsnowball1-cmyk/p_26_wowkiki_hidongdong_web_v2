@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 import StatsInstitutionDetail from './StatsInstitutionDetail'
 
@@ -9,7 +9,7 @@ type HistoryRow = { period: string; count: number; change: number }
 type MetricType = 'mau' | 'wau' | 'dau'
 type DataType = 'web' | 'app'
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 
 const PERIOD_OPTIONS = [
   { label: '오늘',   days: 1 },

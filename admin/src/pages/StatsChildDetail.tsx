@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 
 type MemberRow = { idx: number; id: string; code: string | null; name: string; birth_date: string | null; is_male: boolean; regist_date: string }
 type AppKpi = { mau: number; wau: number; dau: number; mau_change: number; wau_change: number; dau_change: number }
@@ -6,7 +6,7 @@ type LoginLog = { login_dt: string; ip: string; env: string }
 type ContentLog = { activity_dt: string; activity_name: string; duration_min: number }
 type TabKey = 'login' | 'content'
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const PAGE_SIZE = 20
 
 function calcAge(s: string | null) {

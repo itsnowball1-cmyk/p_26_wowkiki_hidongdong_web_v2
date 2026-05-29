@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 import { useRouter } from '../lib/router'
 
@@ -27,7 +27,7 @@ type HistoryItem = {
 
 type TabCounts = { pending: number; rejected: number; active: number; inactive: number }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 
 const TABS: { key: TabName; label: string }[] = [
   { key: 'pending',  label: '신규신청' },
@@ -302,7 +302,7 @@ export default function InstitutionsPage() {
               <div className="py-12 text-center text-[14px] text-[#B5B5B5]">데이터가 없습니다.</div>
             ) : filtered.map((r, i) => (
               <div
-                key={r.idx}
+                key={r.instt_code}
                 className={`grid grid-cols-[40px_60px_1fr_120px_160px_140px] px-6 py-3 items-center text-[14px] ${
                   i < filtered.length - 1 ? 'border-b border-[#DEDEDE]' : ''
                 }`}
@@ -311,7 +311,7 @@ export default function InstitutionsPage() {
                 <span className="text-[#585858]">{i + 1}</span>
                 <button
                   type="button"
-                  onClick={() => go({ name: 'institution-detail', id: String(r.idx) })}
+                  onClick={() => go({ name: 'institution-detail', id: `instt_code:${r.instt_code}` })}
                   className="text-left text-[#484848] font-medium hover:text-[#005744] transition-colors"
                 >
                   {r.inst_name || '-'}

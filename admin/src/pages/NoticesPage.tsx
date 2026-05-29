@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 import NoticesWriteForm from './NoticesWriteForm'
 import NoticesEditForm from './NoticesEditForm'
@@ -20,11 +20,11 @@ const NOTICE_TYPE_LABELS: Record<string, string> = {
   '3': '서비스 안내', '4': '시스템 점검', '5': '업데이트',
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const PAGE_SIZE = 20
 
-export default function NoticesPage({ initialIdx }: { initialIdx?: number } = {}) {
-  const [view, setView] = useState<'list' | 'write'>('list')
+export default function NoticesPage({ initialIdx, initialWrite }: { initialIdx?: number; initialWrite?: boolean } = {}) {
+  const [view, setView] = useState<'list' | 'write'>(initialWrite ? 'write' : 'list')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(initialIdx ?? null)
   const [toast, setToast] = useState('')
 

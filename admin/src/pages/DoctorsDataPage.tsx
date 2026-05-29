@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 
 type StatusFilter = 'active' | 'inactive' | 'all'
@@ -12,7 +12,7 @@ type DoctorRow = {
   regist_date: string
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const PAGE_SIZE = 20
 
 export default function DoctorsDataPage() {
@@ -67,7 +67,7 @@ export default function DoctorsDataPage() {
             <span className="text-[#005744] font-semibold ml-2">{total}</span>
           </p>
           <div className="flex items-center gap-5">
-            {(['active', 'inactive', 'all'] as StatusFilter[]).map(s => (
+            {(['all', 'active', 'inactive'] as StatusFilter[]).map(s => (
               <label
                 key={s}
                 className="flex items-center gap-2 cursor-pointer"

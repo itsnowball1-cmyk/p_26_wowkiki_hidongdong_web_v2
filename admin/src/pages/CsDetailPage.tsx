@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 
 const S_TYPE: Record<string, string> = {
@@ -6,7 +6,7 @@ const S_TYPE: Record<string, string> = {
   '04': '마이페이지', '05': '기타',
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const DL_HEADERS = { 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
 
 type CsFile = { sf_idx: number; file_nm: string; source_file_nm: string; file_size: number | null }

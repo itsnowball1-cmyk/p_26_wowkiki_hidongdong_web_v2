@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 import { useRouter } from '../lib/router'
 
@@ -29,7 +29,7 @@ type Member = {
   regist_date: string
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 
 function calcAge(birthDateStr: string | null): string {
   if (!birthDateStr) return '-'
@@ -49,12 +49,17 @@ export default function InstitutionDetailPage({ id }: { id: string }) {
   const [members, setMembers] = useState<Member[]>([])
   const [loadingInfo, setLoadingInfo] = useState(true)
   const [loadingMembers, setLoadingMembers] = useState(true)
-  const [roleTab, setRoleTab] = useState<RoleTab>('child')
+  const [roleTab, setRoleTab] = useState<RoleTab>('doctor')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [certImage, setCertImage] = useState<string | null>(null)
+  const [certLoading, setCertLoading] = useState(false)
 
   useEffect(() => {
-    fetch(`/api/admin/institution-detail?idx=${id}`, { headers: HEADERS })
+    const qs = id.startsWith('instt_code:')
+      ? `instt_code=${encodeURIComponent(id.slice('instt_code:'.length))}`
+      : `idx=${id}`
+    fetch(`/api/admin/institution-detail?${qs}`, { headers: HEADERS })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setInstitution(data as Institution) })
       .finally(() => setLoadingInfo(false))
@@ -88,9 +93,9 @@ export default function InstitutionDetailPage({ id }: { id: string }) {
   ]
 
   const statusOptions: { key: StatusFilter; label: string }[] = [
+    { key: 'all',      label: '전체 유저' },
     { key: 'active',   label: '활성화 유저' },
     { key: 'inactive', label: '휴면 유저' },
-    { key: 'all',      label: '전체 유저' },
   ]
 
   const roleLabel = roleTab === 'child' ? '아동' : roleTab === 'doctor' ? '의사' : '치료사'
@@ -124,7 +129,25 @@ export default function InstitutionDetailPage({ id }: { id: string }) {
               institution.cert_file_nm
                 ? <span className="flex items-center gap-2 text-[#585858]">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="12" height="14" rx="1" stroke="#585858" strokeWidth="1.2"/><path d="M5 5h6M5 8h6M5 11h4" stroke="#585858" strokeWidth="1.2" strokeLinecap="round"/></svg>
-                    {institution.cert_file_nm}
+                    <span className="truncate max-w-[160px]">{institution.cert_file_nm}</span>
+                    <button
+                      type="button"
+                      disabled={certLoading}
+                      onClick={async () => {
+                        if (!institution.idx) return
+                        setCertLoading(true)
+                        try {
+                          const res = await fetch(`/api/admin/cert-file?member_idx=${institution.idx}`, { headers: HEADERS })
+                          if (res.ok) {
+                            const data = await res.json() as { file_data: string }
+                            setCertImage(data.file_data)
+                          }
+                        } finally { setCertLoading(false) }
+                      }}
+                      className="px-2 h-[24px] text-[12px] border border-[#005744] text-[#005744] rounded-[4px] hover:bg-[#005744] hover:text-white transition disabled:opacity-50 flex-shrink-0"
+                    >
+                      {certLoading ? '…' : '보기'}
+                    </button>
                   </span>
                 : <span className="text-[#B5B5B5]">-</span>
             }
@@ -267,6 +290,28 @@ export default function InstitutionDetailPage({ id }: { id: string }) {
           </>
         )}
       </div>
+      {/* 사업자등록증 이미지 모달 */}
+      {certImage && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+          onClick={() => setCertImage(null)}
+        >
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setCertImage(null)}
+              className="absolute -top-8 right-0 text-white text-[14px] hover:opacity-70"
+            >
+              닫기 ✕
+            </button>
+            <img
+              src={certImage}
+              alt="사업자등록증"
+              className="max-w-[90vw] max-h-[85vh] object-contain rounded-[8px] shadow-xl"
+            />
+          </div>
+        </div>
+      )}
     </Layout>
   )
 }

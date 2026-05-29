@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 import { useRouter } from '../lib/router'
 
@@ -42,7 +42,7 @@ type DashboardData = {
   recent_notices: NoticeItem[]
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const METRIC_LABELS: Record<Metric, string> = { mau: 'MAU', wau: 'WAU', dau: 'DAU' }
 const S_TYPE: Record<string, string> = {
   '01': '아동관리', '02': '전체 내진 일정', '03': '아동별 커스텀',
@@ -136,9 +136,9 @@ export default function DashboardPage() {
         <div>
           <h2 className="text-[20px] font-semibold text-[#202020] mb-3">공지사항</h2>
           <div className="bg-white rounded-[10px] border border-[#DEDEDE] overflow-hidden">
-            <NoticeSection title="고정 공지" notices={data?.pinned_notices ?? []} loading={loading} onNew={() => go({ name: 'notices' })} onSelect={id => go({ name: 'notice-detail', id: String(id) })} />
+            <NoticeSection title="고정 공지" notices={data?.pinned_notices ?? []} loading={loading} onNew={() => go({ name: 'notice-write' })} onSelect={id => go({ name: 'notice-detail', id: String(id) })} onEdit={id => go({ name: 'notice-detail', id: String(id) })} />
             <div className="border-t-4 border-[#F3F3F3]">
-              <NoticeSection title="일반 공지" notices={data?.recent_notices ?? []} loading={loading} onNew={() => go({ name: 'notices' })} onSelect={id => go({ name: 'notice-detail', id: String(id) })} />
+              <NoticeSection title="일반 공지" notices={data?.recent_notices ?? []} loading={loading} onNew={() => go({ name: 'notice-write' })} onSelect={id => go({ name: 'notice-detail', id: String(id) })} onEdit={id => go({ name: 'notice-detail', id: String(id) })} />
             </div>
           </div>
         </div>
@@ -380,8 +380,9 @@ function MauPanel({ title, metric, onMetricChange, stats, loading, onDetail }: {
 }
 
 /* ── 공지사항 서브섹션 ── */
-function NoticeSection({ title, notices, loading, onNew, onSelect }: {
-  title: string; notices: NoticeItem[]; loading: boolean; onNew: () => void; onSelect: (id: number) => void
+function NoticeSection({ title, notices, loading, onNew, onSelect, onEdit }: {
+  title: string; notices: NoticeItem[]; loading: boolean
+  onNew: () => void; onSelect: (id: number) => void; onEdit: (id: number) => void
 }) {
   return (
     <div>
@@ -407,7 +408,7 @@ function NoticeSection({ title, notices, loading, onNew, onSelect }: {
           <span className="text-[#202020]">{i + 1}</span>
           <span className="text-[#202020] text-left truncate pr-2">{n.title}</span>
           <span className="text-[#202020]">{n.created_at}</span>
-          <button type="button" onClick={e => { e.stopPropagation(); onNew() }}
+          <button type="button" onClick={e => { e.stopPropagation(); onEdit(n.idx) }}
             className="text-[13px] text-[#202020] hover:text-[#005744] font-medium">수정</button>
         </div>
       ))}

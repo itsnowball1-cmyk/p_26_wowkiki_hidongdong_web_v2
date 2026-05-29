@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 export type RouteName =
   | 'login' | 'dashboard' | 'institutions' | 'institution-detail' | 'institution-entities'
   | 'institution-admins'
-  | 'children' | 'stats' | 'notices' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
+  | 'children' | 'stats' | 'notices' | 'notice-write' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
   | 'sms-settings' | 'security' | 'content' | 'versions' | 'data' | 'mypage'
   | 'therapists' | 'doctors'
 
@@ -17,6 +17,7 @@ type Route =
   | { name: 'children' }
   | { name: 'stats' }
   | { name: 'notices' }
+  | { name: 'notice-write' }
   | { name: 'notice-detail'; id: string }
   | { name: 'faq' }
   | { name: 'cs' }
@@ -39,6 +40,7 @@ function parseHash(hash: string): Route {
   if (hash.startsWith('#/institution-entities')) return { name: 'institution-entities' }
   if (hash.startsWith('#/institution-admins')) return { name: 'institution-admins' }
   if (hash.startsWith('#/institutions')) return { name: 'institutions' }
+  if (hash.startsWith('#/notice-write'))  return { name: 'notice-write' }
   if (hash.startsWith('#/notice-detail/')) return { name: 'notice-detail', id: hash.split('#/notice-detail/')[1] }
   if (hash.startsWith('#/cs-detail/')) return { name: 'cs-detail', id: hash.split('#/cs-detail/')[1] }
   if (hash.startsWith('#/children'))     return { name: 'children' }
@@ -64,6 +66,7 @@ function toHash(r: Route): string {
   if (r.name === 'institution-entities') return '#/institution-entities'
   if (r.name === 'institution-admins') return '#/institution-admins'
   if (r.name === 'institutions') return '#/institutions'
+  if (r.name === 'notice-write')  return '#/notice-write'
   if (r.name === 'notice-detail') return `#/notice-detail/${r.id}`
   if (r.name === 'cs-detail') return `#/cs-detail/${r.id}`
   if (r.name === 'children')     return '#/children'

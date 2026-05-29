@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 
 type StatusFilter = 'active' | 'inactive' | 'all'
@@ -17,14 +17,14 @@ type ChildRow = {
   next_therapy_appt: string
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const PAGE_SIZE = 20
 
 export default function ChildrenDataPage() {
   const [rows, setRows] = useState<ChildRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -72,7 +72,7 @@ export default function ChildrenDataPage() {
             <span className="text-[#005744] font-semibold ml-2">{total}</span>
           </p>
           <div className="flex items-center gap-5">
-            {(['active', 'inactive', 'all'] as StatusFilter[]).map(s => (
+            {(['all', 'active', 'inactive'] as StatusFilter[]).map(s => (
               <label
                 key={s}
                 className="flex items-center gap-2 cursor-pointer"

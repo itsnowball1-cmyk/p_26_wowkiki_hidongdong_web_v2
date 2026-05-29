@@ -802,6 +802,21 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       })
     }
 
+    // GET /api/admin/badge-counts — 사이드바 배지용 승인 대기 건수
+    if (path === '/api/admin/badge-counts' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const [[row]] = await conn.query<RowDataPacket[]>(
+        `SELECT
+           SUM(mtype = 'iadmin'   AND approval_status = '승인대기' AND delete_yn = 'N') AS institutions,
+           SUM(mtype = 'teacher'  AND approval_status = '승인대기' AND delete_yn = 'N') AS therapists
+         FROM tb_member`
+      ) as [RowDataPacket[], unknown]
+      return json({
+        institutions: Number(row?.institutions ?? 0),
+        therapists:   Number(row?.therapists   ?? 0),
+      })
+    }
+
     // GET /api/admin/pending-approvals — 승인 대기 목록 (대시보드용)
     if (path === '/api/admin/pending-approvals' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
@@ -831,9 +846,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
 
       // 회원 정보 조회 (SMS 발송용)
       const [memberRows] = await conn.query<RowDataPacket[]>(
-        `SELECT m.name, m.phone, m.instt_code, i.inst_name
+        `SELECT m.name, m.phone, m.instt_code, i.name AS inst_name
          FROM tb_member m
-         LEFT JOIN tb_institution i ON i.code = m.instt_code
+         LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          WHERE m.idx = ? LIMIT 1`,
         [body.idx]
       )
@@ -847,7 +862,28 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
           `UPDATE tb_member SET approval_status = NULL, instt_code = ?, code = REPLACE(code, ?, ?), update_date = NOW() WHERE idx = ?`,
           [instt_code, oldCode, instt_code, body.idx]
         )
+        // tb_institution 코드 업데이트 (신청서 기록 유지)
         try { await conn.query(`UPDATE tb_institution SET code = ? WHERE code = ?`, [instt_code, oldCode]) } catch {}
+        // tb_instt (기관 마스터)에 승인된 기관 등록
+        try {
+          const [instRows] = await conn.query<RowDataPacket[]>(
+            `SELECT inst_type, inst_name, address, address_detail, business_reg_num FROM tb_institution WHERE code = ? LIMIT 1`,
+            [instt_code]
+          )
+          const instData = (instRows as RowDataPacket[])[0] as { inst_type?: string; inst_name?: string; address?: string; address_detail?: string; business_reg_num?: string } | undefined
+          const [[existRow]] = await conn.query<RowDataPacket[]>(`SELECT instt_idx FROM tb_instt WHERE instt_code = ? LIMIT 1`, [instt_code]) as [RowDataPacket[], unknown]
+          if (existRow) {
+            if (instData) await conn.query(
+              `UPDATE tb_instt SET itype=?, name=?, address1=?, address2=?, actno=? WHERE instt_code=?`,
+              [instData.inst_type ?? null, instData.inst_name ?? null, instData.address ?? null, instData.address_detail ?? null, instData.business_reg_num ?? null, instt_code]
+            )
+          } else {
+            await conn.query(
+              `INSERT INTO tb_instt (instt_code, itype, name, address1, address2, actno) VALUES (?, ?, ?, ?, ?, ?)`,
+              [instt_code, instData?.inst_type ?? null, instData?.inst_name ?? null, instData?.address ?? null, instData?.address_detail ?? null, instData?.business_reg_num ?? null]
+            )
+          }
+        } catch {}
 
         // 승인 SMS 발송
         if (member?.phone) {
@@ -920,10 +956,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
 
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.name, m.code, m.instt_code, m.regist_date,
-                COALESCE(i.inst_name, m.instt_code) AS instt_name,
+                COALESCE(i.name, m.instt_code) AS instt_name,
                 (SELECT COUNT(*) FROM tb_member c WHERE c.mtype='child' AND c.doctor_code=m.code AND c.delete_yn='N') AS child_count
          FROM tb_member m
-         LEFT JOIN tb_institution i ON i.code = m.instt_code
+         LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          WHERE ${whereClause}${searchClause}
          ORDER BY m.regist_date DESC
          LIMIT ? OFFSET ?`,
@@ -970,13 +1006,13 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
 
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.id, m.code, m.name, m.birth_date, m.is_male_yn, m.instt_code, m.regist_date,
-                COALESCE(i.inst_name, m.instt_code) AS instt_name,
+                COALESCE(i.name, m.instt_code) AS instt_name,
                 d.name AS doctor_name,
                 t.name AS therapist_name,
                 (SELECT DATE_FORMAT(MIN(start_date), '%Y.%m.%d') FROM tb_schedule WHERE child_id = m.id AND schedule_type = '1' AND start_date > NOW()) AS next_doctor_appt,
                 (SELECT DATE_FORMAT(MIN(start_date), '%Y.%m.%d') FROM tb_schedule WHERE child_id = m.id AND schedule_type = '2' AND start_date > NOW()) AS next_therapy_appt
          FROM tb_member m
-         LEFT JOIN tb_institution i ON i.code = m.instt_code
+         LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          LEFT JOIN tb_member d ON d.code = m.doctor_code AND d.mtype = 'doctor'
          LEFT JOIN tb_member t ON t.code = m.teacher_code AND t.mtype = 'teacher'
          WHERE ${whereClause}${searchClause}
@@ -1031,16 +1067,16 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       } catch { /* 컬럼 없음 */ }
 
       const [[{ total }]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS total FROM tb_member m LEFT JOIN tb_institution i ON i.code = m.instt_code WHERE ${whereClause}${searchClause}`,
+        `SELECT COUNT(*) AS total FROM tb_member m LEFT JOIN tb_instt i ON i.instt_code = m.instt_code WHERE ${whereClause}${searchClause}`,
         searchParams
       ) as [RowDataPacket[], unknown]
 
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.name, m.code, m.instt_code, m.regist_date, m.approval_status,
-                COALESCE(i.inst_name, m.instt_code) AS instt_name,
+                COALESCE(i.name, m.instt_code) AS instt_name,
                 ${childCountExpr} AS child_count
          FROM tb_member m
-         LEFT JOIN tb_institution i ON i.code = m.instt_code
+         LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          WHERE ${whereClause}${searchClause}
          ORDER BY m.regist_date DESC
          LIMIT ? OFFSET ?`,
@@ -1133,6 +1169,23 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       }
     }
 
+    // GET /api/admin/cert-file?member_idx={idx} — 기관 사업자등록증 파일 데이터
+    if (path === '/api/admin/cert-file' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const memberIdx = Number(url.searchParams.get('member_idx') ?? 0)
+      if (!memberIdx) return err(400, '필수 항목 누락')
+      try {
+        const [[row]] = await conn.query<RowDataPacket[]>(
+          `SELECT source_file_nm, file_data FROM tb_license_file WHERE member_idx = ? ORDER BY idx DESC LIMIT 1`,
+          [memberIdx]
+        ) as [RowDataPacket[], unknown]
+        if (!row || !row.file_data) return err(404, '파일을 찾을 수 없습니다.')
+        return json({ source_file_nm: row.source_file_nm ?? null, file_data: row.file_data })
+      } catch {
+        return err(404, '파일을 찾을 수 없습니다.')
+      }
+    }
+
     // GET /api/admin/sms-templates
     if (path === '/api/admin/sms-templates' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
@@ -1158,40 +1211,76 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     if (path === '/api/admin/institutions' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
       const status = url.searchParams.get('status') ?? 'pending'
-      let whereClause = ''
-      if (status === 'pending')        whereClause = `approval_status = '승인대기'`
-      else if (status === 'rejected')  whereClause = `approval_status = '반려'`
-      else if (status === 'active')    whereClause = `approval_status IS NULL AND delete_yn = 'N'`
-      else                             whereClause = `delete_yn = 'Y'`
-      const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT m.idx, m.id, m.name, m.mtype, m.instt_code, m.regist_date, m.update_date, m.admin_memo,
-                i.inst_name, i.inst_type
-         FROM tb_member m
-         LEFT JOIN tb_institution i ON i.code = m.instt_code
-         WHERE ${whereClause} AND m.mtype IN ('iadmin','teacher')
-         ORDER BY m.regist_date DESC`
-      )
+
+      let rows: RowDataPacket[]
+      if (status === 'active' || status === 'inactive') {
+        // 활성화/비활성화: instt_code 단위로 묶어서 기관 1개당 1행 반환
+        const deleteYn = status === 'active' ? 'N' : 'Y'
+        const [r] = await conn.query<RowDataPacket[]>(
+          `SELECT m.instt_code,
+                  COALESCE(i.name, m.instt_code) AS inst_name,
+                  i.itype AS inst_type,
+                  MIN(m.regist_date) AS regist_date,
+                  MIN(m.update_date) AS update_date
+           FROM tb_member m
+           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
+           WHERE m.delete_yn = ? AND m.mtype IN ('iadmin','doctor','teacher')
+             AND (m.mtype != 'iadmin' OR m.approval_status IS NULL)
+           GROUP BY m.instt_code, i.name, i.itype
+           ORDER BY MIN(m.regist_date) DESC`,
+          [deleteYn]
+        )
+        rows = r as RowDataPacket[]
+      } else {
+        let whereClause = status === 'pending' ? `approval_status = '승인대기'` : `approval_status = '반려'`
+        const [r] = await conn.query<RowDataPacket[]>(
+          `SELECT m.idx, m.id, m.name, m.mtype, m.instt_code, m.regist_date, m.update_date, m.admin_memo,
+                  i.name AS inst_name, i.itype AS inst_type
+           FROM tb_member m
+           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
+           WHERE ${whereClause} AND m.mtype IN ('iadmin','teacher')
+           ORDER BY m.regist_date DESC`
+        )
+        rows = r as RowDataPacket[]
+      }
+
       const [[cnt]] = await conn.query<RowDataPacket[]>(
         `SELECT
-           SUM(approval_status = '승인대기') AS pending,
-           SUM(approval_status = '반려') AS rejected,
-           SUM(approval_status IS NULL AND delete_yn = 'N') AS active,
-           SUM(delete_yn = 'Y') AS inactive
-         FROM tb_member WHERE mtype IN ('iadmin','teacher')`
+           SUM(approval_status = '승인대기' AND mtype IN ('iadmin','teacher')) AS pending,
+           SUM(approval_status = '반려' AND mtype IN ('iadmin','teacher')) AS rejected,
+           COUNT(DISTINCT CASE WHEN delete_yn='N' AND mtype IN ('iadmin','doctor','teacher') AND (mtype != 'iadmin' OR approval_status IS NULL) THEN instt_code END) AS active,
+           COUNT(DISTINCT CASE WHEN delete_yn='Y' AND mtype IN ('iadmin','doctor','teacher') THEN instt_code END) AS inactive
+         FROM tb_member`
       ) as [RowDataPacket[], unknown]
+
+      const mappedRows = (status === 'active' || status === 'inactive')
+        ? (rows as RowDataPacket[]).map(r => ({
+            idx:           0,
+            id:            '',
+            name:          '',
+            inst_name:     r.inst_name ?? r.instt_code,
+            role:          '',
+            instt_code:    r.instt_code,
+            instt_type:    r.inst_type ?? '-',
+            regist_date:   fmtDate(r.regist_date) ?? '-',
+            rejected_date: fmtDate(r.update_date) ?? '-',
+            rejected_reason: '',
+          }))
+        : (rows as RowDataPacket[]).map(r => ({
+            idx:              r.idx,
+            id:               r.id,
+            name:             r.name,
+            inst_name:        r.inst_name ?? '',
+            role:             r.mtype === 'teacher' ? '치료사' : '기관관리자',
+            instt_code:       r.instt_code,
+            instt_type:       r.inst_type ?? '-',
+            regist_date:      fmtDate(r.regist_date) ?? '-',
+            rejected_date:    fmtDate(r.update_date) ?? '-',
+            rejected_reason:  r.admin_memo ?? '-',
+          }))
+
       return json({
-        rows: (rows as RowDataPacket[]).map(r => ({
-          idx:              r.idx,
-          id:               r.id,
-          name:             r.name,
-          inst_name:        r.inst_name ?? '',
-          role:             r.mtype === 'teacher' ? '치료사' : '기관관리자',
-          instt_code:       r.instt_code,
-          instt_type:       r.inst_type ?? '-',
-          regist_date:      fmtDate(r.regist_date) ?? '-',
-          rejected_date:    fmtDate(r.update_date) ?? '-',
-          rejected_reason:  r.admin_memo ?? '-',
-        })),
+        rows: mappedRows,
         counts: {
           pending:  Number(cnt?.pending  ?? 0),
           rejected: Number(cnt?.rejected ?? 0),
@@ -1278,10 +1367,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       ) as [RowDataPacket[], unknown]
       const [instRows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.instt_code, m.name AS contact_name, m.regist_date,
-                COALESCE(i.instt_name, m.instt_code) AS instt_name,
-                COALESCE(i.instt_type, '-') AS instt_type
+                COALESCE(i.name, m.instt_code) AS instt_name,
+                COALESCE(i.itype, '-') AS instt_type
          FROM tb_member m
-         LEFT JOIN tb_institution i ON m.instt_code = i.instt_code
+         LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          WHERE m.mtype='iadmin' AND m.delete_yn='N' AND m.approval_status IS NULL
          ORDER BY m.regist_date DESC`
       ).catch(async () => {
@@ -1304,25 +1393,45 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       })
     }
 
-    // GET /api/admin/institution-detail?idx={idx} — 기관 상세 정보
+    // GET /api/admin/institution-detail?idx={idx}|instt_code={code} — 기관 상세 정보
     if (path === '/api/admin/institution-detail' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const insttCodeParam = url.searchParams.get('instt_code') ?? ''
       const idx = Number(url.searchParams.get('idx') ?? 0)
-      if (!idx) return err(400, '필수 항목 누락')
-      const [[member]] = await conn.query<RowDataPacket[]>(
-        `SELECT idx, id, name, email, phone, instt_code, regist_date FROM tb_member WHERE idx = ? AND mtype = 'iadmin' LIMIT 1`,
-        [idx]
-      ) as [RowDataPacket[], unknown]
+      if (!idx && !insttCodeParam) return err(400, '필수 항목 누락')
+
+      let member: RowDataPacket | undefined
+      if (insttCodeParam) {
+        // instt_code 기준 조회: iadmin 우선, 없으면 아무 멤버
+        const [[m1]] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, id, name, email, phone, instt_code, regist_date FROM tb_member WHERE instt_code = ? AND mtype = 'iadmin' AND delete_yn = 'N' LIMIT 1`,
+          [insttCodeParam]
+        ) as [RowDataPacket[], unknown]
+        if (m1) {
+          member = m1
+        } else {
+          const [[m2]] = await conn.query<RowDataPacket[]>(
+            `SELECT idx, id, name, email, phone, instt_code, regist_date FROM tb_member WHERE instt_code = ? AND delete_yn = 'N' LIMIT 1`,
+            [insttCodeParam]
+          ) as [RowDataPacket[], unknown]
+          member = m2
+        }
+      } else {
+        const [[m]] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, id, name, email, phone, instt_code, regist_date FROM tb_member WHERE idx = ? AND mtype = 'iadmin' LIMIT 1`,
+          [idx]
+        ) as [RowDataPacket[], unknown]
+        member = m
+      }
       if (!member) return err(404, '기관을 찾을 수 없습니다.')
-      // tb_institution 있으면 JOIN, 없으면 gracefully fallback
       let insttInfo: RowDataPacket | null = null
       try {
         const [[row]] = await conn.query<RowDataPacket[]>(
-          `SELECT instt_name, instt_type, address FROM tb_institution WHERE instt_code = ? LIMIT 1`,
+          `SELECT name AS instt_name, itype AS instt_type, address1 AS address FROM tb_instt WHERE instt_code = ? LIMIT 1`,
           [member.instt_code]
         ) as [RowDataPacket[], unknown]
         insttInfo = row ?? null
-      } catch { /* tb_institution 없음 */ }
+      } catch {}
       // 사업자 등록증
       let certFileNm: string | null = null
       try {
@@ -3542,7 +3651,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         const [[cntRow]] = await conn.query<RowDataPacket[]>(
           `SELECT COUNT(DISTINCT m.instt_code) AS cnt
            FROM tb_member m
-           LEFT JOIN tb_institution i ON i.code = m.instt_code
+           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
            WHERE m.instt_code IS NOT NULL AND m.instt_code != ''
              AND m.delete_yn='N' AND m.approval_status IS NULL
              AND m.mtype IN ('iadmin','doctor','teacher','child')
@@ -3553,16 +3662,16 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
 
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT m.instt_code,
-                  COALESCE(MAX(i.inst_name), m.instt_code) AS inst_name,
-                  MAX(i.inst_type) AS inst_type,
-                  MAX(i.address) AS address,
+                  COALESCE(MAX(i.name), m.instt_code) AS inst_name,
+                  MAX(i.itype) AS inst_type,
+                  MAX(i.address1) AS address,
                   COUNT(DISTINCT CASE WHEN m.mtype='iadmin' THEN m.idx END) AS admin_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='doctor' THEN m.idx END) AS doctor_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='teacher' THEN m.idx END) AS therapist_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='child' THEN m.idx END) AS child_count,
                   DATE_FORMAT(MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END), '%Y.%m.%d') AS regist_date
            FROM tb_member m
-           LEFT JOIN tb_institution i ON i.code = m.instt_code
+           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
            WHERE m.instt_code IS NOT NULL AND m.instt_code != ''
              AND m.delete_yn='N' AND m.approval_status IS NULL
              AND m.mtype IN ('iadmin','doctor','teacher','child')
@@ -3595,24 +3704,24 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       const page = Math.max(1, Number(url.searchParams.get('page') ?? 1))
       const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20))
       const search = (url.searchParams.get('search') ?? '').trim()
-      const sClause = search ? `AND (m.name LIKE ? OR m.id LIKE ? OR i.inst_name LIKE ?)` : ''
+      const sClause = search ? `AND (m.name LIKE ? OR m.id LIKE ? OR i.name LIKE ?)` : ''
       const sArgs = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : []
       let items: unknown[] = [], total = 0
       try {
         const [[cntRow]] = await conn.query<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt FROM tb_member m
-           LEFT JOIN tb_institution i ON i.code = m.instt_code
+           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
            WHERE m.mtype = 'iadmin' AND m.delete_yn = 'N' ${sClause}`,
           sArgs
         ) as [RowDataPacket[], unknown]
         total = Number(cntRow?.cnt ?? 0)
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT m.idx, m.name, m.id, m.instt_code, m.approval_status,
-                  COALESCE(i.inst_name, m.instt_code) AS inst_name,
-                  COALESCE(i.inst_type, '') AS inst_type,
+                  COALESCE(i.name, m.instt_code) AS inst_name,
+                  COALESCE(i.itype, '') AS inst_type,
                   DATE_FORMAT(m.regist_date, '%Y.%m.%d') AS regist_date
            FROM tb_member m
-           LEFT JOIN tb_institution i ON i.code = m.instt_code
+           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
            WHERE m.mtype = 'iadmin' AND m.delete_yn = 'N' ${sClause}
            ORDER BY m.regist_date DESC
            LIMIT ? OFFSET ?`,
@@ -3716,9 +3825,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       ) as [RowDataPacket[], unknown]
       const [pendingRows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.name, m.mtype, m.instt_code, DATE_FORMAT(m.regist_date,'%Y.%m.%d') AS regist_date,
-                i.inst_name
+                i.name AS inst_name
          FROM tb_member m
-         LEFT JOIN tb_institution i ON i.code = m.instt_code
+         LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          WHERE m.approval_status='승인대기' AND m.delete_yn='N'
          ORDER BY m.regist_date DESC LIMIT 5`
       ) as [RowDataPacket[], unknown]

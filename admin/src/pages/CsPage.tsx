@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 import { useRouter } from '../lib/router'
 import CsDetailPage from './CsDetailPage'
@@ -19,7 +19,7 @@ type CsItem = {
   reply_date: string | null
 }
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const PAGE_SIZE = 20
 
 export default function CsPage({ initialIdx }: { initialIdx?: number } = {}) {

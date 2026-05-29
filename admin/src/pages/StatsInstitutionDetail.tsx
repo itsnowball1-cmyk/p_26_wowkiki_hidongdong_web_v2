@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import StatsChildDetail from './StatsChildDetail'
 import StatsStaffDetail from './StatsStaffDetail'
 
@@ -6,7 +6,7 @@ type StatGroup = { mau: number; wau: number; dau: number }
 type MemberRow = { idx: number; id: string; code: string | null; name: string; birth_date: string | null; is_male: boolean; regist_date: string; child_count?: number }
 type TabKey = 'funnel' | 'child' | 'doctor' | 'therapist'
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 
 const FUNNEL_STEPS = [
   { step: '앱 접속',       count: 1000, pct: 100, dropoutAfter: 10 },

@@ -47,6 +47,7 @@ function Routes() {
     case 'children':         return <ChildrenDataPage />
     case 'stats':            return <StatsPage />
     case 'notices':          return <NoticesPage />
+    case 'notice-write':     return <NoticesPage initialWrite={true} />
     case 'notice-detail':    return <NoticesPage initialIdx={Number(route.id)} />
     case 'faq':              return <FAQPage />
     case 'cs':               return <CsPage />

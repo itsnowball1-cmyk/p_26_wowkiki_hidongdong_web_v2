@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import StatsCustomDetail from './StatsCustomDetail'
 
 type MemberRow = { idx: number; id: string; code: string | null; name: string; regist_date: string; child_count?: number }
@@ -9,7 +9,7 @@ type CustomLog = { log_idx: number; activity_dt: string; child_name_code: string
 type TaskLog = { task_dt: string; task_content: string; child_name_code: string }
 type TabKey = 'login' | 'custom' | 'task'
 
-const HEADERS = { 'content-type': 'application/json', 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 const PAGE_SIZE = 20
 
 function TrendBadge({ change }: { change: number | undefined | null }) {
