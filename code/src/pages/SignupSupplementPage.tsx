@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import BrandLogo from '../components/BrandLogo'
 import { useAuth } from '../lib/auth'
 import { useRouter } from '../lib/router'
+import { DupWarningModal } from './SignupFormPage'
 
 type RejectedUser = { id: string; name: string; institutionCode: string }
 
@@ -28,6 +29,7 @@ export default function SignupSupplementPage() {
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [showDupWarning, setShowDupWarning] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
@@ -89,6 +91,7 @@ export default function SignupSupplementPage() {
   }
 
   return (
+    <>
     <div className="min-h-screen bg-white px-6 py-10">
       <div className="max-w-[960px] mx-auto">
         <div className="mb-12">
@@ -136,7 +139,7 @@ export default function SignupSupplementPage() {
                 <div
                   onDragOver={e => { e.preventDefault(); setDragging(true) }}
                   onDragLeave={() => setDragging(false)}
-                  onDrop={e => { e.preventDefault(); setDragging(false); setFile(e.dataTransfer.files[0] ?? null) }}
+                  onDrop={e => { e.preventDefault(); setDragging(false); if (file) { setShowDupWarning(true); return } setFile(e.dataTransfer.files[0] ?? null) }}
                   onClick={() => inputRef.current?.click()}
                   className={`flex-1 min-h-[64px] border border-dashed rounded-[7px] flex items-center justify-center text-[13px] transition-colors cursor-pointer ${
                     dragging ? 'border-brand bg-brand/5 text-brand' : 'border-[#B1B1B1] text-ink-400'
@@ -189,6 +192,9 @@ export default function SignupSupplementPage() {
         </div>
       </div>
     </div>
+
+    {showDupWarning && <DupWarningModal onClose={() => setShowDupWarning(false)} />}
+    </>
   )
 }
 

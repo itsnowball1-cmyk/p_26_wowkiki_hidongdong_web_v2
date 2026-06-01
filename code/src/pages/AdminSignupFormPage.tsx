@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import BrandLogo from '../components/BrandLogo'
 import Stepper from '../components/Stepper'
 import { useRouter } from '../lib/router'
+import { DupWarningModal } from './SignupFormPage'
 
 declare global {
   interface Window {
@@ -63,6 +64,7 @@ export default function AdminSignupFormPage() {
   const [certFile, setCertFile] = useState<File | null>(null)
   const [certDragging, setCertDragging] = useState(false)
   const certInputRef = useRef<HTMLInputElement>(null)
+  const [showDupWarning, setShowDupWarning] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [generatedCode, setGeneratedCode] = useState('')
   const [submitError, setSubmitError] = useState('')
@@ -224,6 +226,7 @@ export default function AdminSignupFormPage() {
 
   if (submitted) {
     return (
+      <>
       <div className="min-h-screen bg-white flex flex-col px-6 py-10">
         <div className="w-full max-w-[960px] mx-auto">
           <div className="mb-8"><BrandLogo size="md" /></div>
@@ -252,10 +255,14 @@ export default function AdminSignupFormPage() {
           </button>
         </div>
       </div>
+
+      {showDupWarning && <DupWarningModal onClose={() => setShowDupWarning(false)} />}
+      </>
     )
   }
 
   return (
+    <>
     <div className="min-h-screen bg-white px-6 py-10">
       <div className="max-w-[960px] mx-auto">
         <div className="mb-8"><BrandLogo size="md" /></div>
@@ -311,7 +318,7 @@ export default function AdminSignupFormPage() {
                 <div
                   onDragOver={e => { e.preventDefault(); setCertDragging(true) }}
                   onDragLeave={() => setCertDragging(false)}
-                  onDrop={e => { e.preventDefault(); setCertDragging(false); setCertFile(e.dataTransfer.files[0] ?? null) }}
+                  onDrop={e => { e.preventDefault(); setCertDragging(false); if (certFile) { setShowDupWarning(true); return } setCertFile(e.dataTransfer.files[0] ?? null) }}
                   onClick={() => certInputRef.current?.click()}
                   className={`flex-1 min-h-[64px] border border-dashed rounded-[7px] flex items-center justify-center text-[13px] transition-colors cursor-pointer ${
                     certDragging ? 'border-brand bg-brand/5 text-brand' : 'border-[#B1B1B1] text-ink-400'
@@ -501,6 +508,9 @@ export default function AdminSignupFormPage() {
         </div>
       </div>
     </div>
+
+    {showDupWarning && <DupWarningModal onClose={() => setShowDupWarning(false)} />}
+    </>
   )
 }
 

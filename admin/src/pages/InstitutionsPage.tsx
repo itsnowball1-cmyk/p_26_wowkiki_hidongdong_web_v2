@@ -393,7 +393,7 @@ export default function InstitutionsPage() {
                 <span className="text-[#484848] font-medium">{r.inst_name || '-'}</span>
                 <button
                   type="button"
-                  onClick={() => go({ name: 'institution-detail', id: String(r.idx) })}
+                  onClick={() => go({ name: 'institution-approval', id: String(r.idx) })}
                   className="flex items-center gap-1 text-[#585858] hover:text-[#005744] transition-colors w-fit"
                 >
                   상세보기
@@ -451,7 +451,7 @@ export default function InstitutionsPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => go({ name: 'institution-detail', id: String(r.idx) })}
+                  onClick={() => go({ name: 'institution-approval', id: String(r.idx) })}
                   className="flex items-center gap-1 text-[#585858] hover:text-[#005744] transition-colors w-fit"
                 >
                   상세보기

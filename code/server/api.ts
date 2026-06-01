@@ -1131,6 +1131,60 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       return json({ ok: true, approved: approvedIdxs.length })
     }
 
+    // GET /api/admin/institution-request?idx={memberIdx} — 기관 인증 요청 상세 조회
+    if (path === '/api/admin/institution-request' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const idx = Number(url.searchParams.get('idx') ?? 0)
+      if (!idx) return err(400, '필수 항목 누락')
+
+      const [[member]] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, id, name, phone, email, instt_code, mtype, approval_status, admin_memo
+         FROM tb_member WHERE idx = ? LIMIT 1`, [idx]
+      ) as [RowDataPacket[], unknown]
+      if (!member) return err(404, '회원을 찾을 수 없습니다.')
+
+      let instInfo: RowDataPacket | null = null
+      try {
+        const [[inst]] = await conn.query<RowDataPacket[]>(
+          `SELECT inst_name, inst_type, address, address_detail, director_name, other_requests, doctor_sheets, therapist_sheets, business_reg_num
+           FROM tb_institution WHERE code = ? LIMIT 1`, [member.instt_code]
+        ) as [RowDataPacket[], unknown]
+        instInfo = inst ?? null
+      } catch {}
+
+      let history: unknown[] = []
+      try {
+        const [hRows] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, attempt_number, source_file_nm, submitted_at FROM tb_approval_history WHERE member_idx = ? ORDER BY attempt_number ASC`, [idx]
+        )
+        history = (hRows as RowDataPacket[]).map(r => ({
+          idx: r.idx, attempt_number: r.attempt_number,
+          source_file_nm: r.source_file_nm ?? null,
+          submitted_at: fmtDateTime(r.submitted_at) ?? '-',
+        }))
+      } catch {}
+
+      return json({
+        member: {
+          idx: (member as RowDataPacket).idx, id: (member as RowDataPacket).id,
+          name: (member as RowDataPacket).name, phone: (member as RowDataPacket).phone ?? null,
+          email: (member as RowDataPacket).email ?? null, instt_code: (member as RowDataPacket).instt_code,
+          mtype: (member as RowDataPacket).mtype, approval_status: (member as RowDataPacket).approval_status ?? null,
+          admin_memo: (member as RowDataPacket).admin_memo ?? null,
+        },
+        institution: instInfo ? {
+          inst_name: (instInfo as RowDataPacket).inst_name ?? null, inst_type: (instInfo as RowDataPacket).inst_type ?? null,
+          address: (instInfo as RowDataPacket).address ?? null, address_detail: (instInfo as RowDataPacket).address_detail ?? null,
+          director_name: (instInfo as RowDataPacket).director_name ?? null,
+          other_requests: (instInfo as RowDataPacket).other_requests ?? null,
+          doctor_sheets: (instInfo as RowDataPacket).doctor_sheets ?? null,
+          therapist_sheets: (instInfo as RowDataPacket).therapist_sheets ?? null,
+          business_reg_num: (instInfo as RowDataPacket).business_reg_num ?? null,
+        } : null,
+        history,
+      })
+    }
+
     // GET /api/admin/approval-history?memberIdx={idx} — 제출 이력 목록 (파일 데이터 제외)
     if (path === '/api/admin/approval-history' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
@@ -3661,8 +3715,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         total = Number(cntRow?.cnt ?? 0)
 
         const [rows] = await conn.query<RowDataPacket[]>(
-          `SELECT m.instt_code,
-                  COALESCE(MAX(i.name), m.instt_code) AS inst_name,
+          `SELECT UPPER(m.instt_code) AS instt_code,
+                  COALESCE(MAX(i.name), UPPER(m.instt_code)) AS inst_name,
                   MAX(i.itype) AS inst_type,
                   MAX(i.address1) AS address,
                   COUNT(DISTINCT CASE WHEN m.mtype='iadmin' THEN m.idx END) AS admin_count,
@@ -3671,12 +3725,12 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
                   COUNT(DISTINCT CASE WHEN m.mtype='child' THEN m.idx END) AS child_count,
                   DATE_FORMAT(MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END), '%Y.%m.%d') AS regist_date
            FROM tb_member m
-           LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
+           LEFT JOIN tb_instt i ON UPPER(i.instt_code) = UPPER(m.instt_code)
            WHERE m.instt_code IS NOT NULL AND m.instt_code != ''
              AND m.delete_yn='N' AND m.approval_status IS NULL
              AND m.mtype IN ('iadmin','doctor','teacher','child')
              ${sClause}
-           GROUP BY m.instt_code
+           GROUP BY UPPER(m.instt_code)
            ORDER BY MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END) DESC
            LIMIT ? OFFSET ?`,
           [...sArgs, PAGE_SIZE, (page - 1) * PAGE_SIZE]

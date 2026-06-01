@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 export type RouteName =
   | 'login' | 'dashboard' | 'institutions' | 'institution-detail' | 'institution-entities'
-  | 'institution-admins'
+  | 'institution-admins' | 'institution-approval'
   | 'children' | 'stats' | 'notices' | 'notice-write' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
   | 'sms-settings' | 'security' | 'content' | 'versions' | 'data' | 'mypage'
   | 'therapists' | 'doctors'
@@ -12,6 +12,7 @@ type Route =
   | { name: 'dashboard' }
   | { name: 'institutions' }
   | { name: 'institution-detail'; id: string }
+  | { name: 'institution-approval'; id: string }
   | { name: 'institution-entities' }
   | { name: 'institution-admins' }
   | { name: 'children' }
@@ -36,6 +37,7 @@ type RouterValue = { route: Route; go: (r: Route) => void; navKey: number }
 const RouterContext = createContext<RouterValue | null>(null)
 
 function parseHash(hash: string): Route {
+  if (hash.startsWith('#/institution-approval/')) return { name: 'institution-approval', id: hash.split('#/institution-approval/')[1] }
   if (hash.startsWith('#/institutions/')) return { name: 'institution-detail', id: hash.split('#/institutions/')[1] }
   if (hash.startsWith('#/institution-entities')) return { name: 'institution-entities' }
   if (hash.startsWith('#/institution-admins')) return { name: 'institution-admins' }
@@ -62,6 +64,7 @@ function parseHash(hash: string): Route {
 }
 
 function toHash(r: Route): string {
+  if (r.name === 'institution-approval') return `#/institution-approval/${r.id}`
   if (r.name === 'institution-detail') return `#/institutions/${r.id}`
   if (r.name === 'institution-entities') return '#/institution-entities'
   if (r.name === 'institution-admins') return '#/institution-admins'

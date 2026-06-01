@@ -60,9 +60,10 @@ export default function SignupFormPage({ role }: Props) {
   const [licenseFile, setLicenseFile] = useState<File | null>(null)
   const [licenseDragging, setLicenseDragging] = useState(false)
   const licenseInputRef = useRef<HTMLInputElement>(null)
+  const [showDupWarning, setShowDupWarning] = useState(false)
 
   const update = (k: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value
+    const v = k === 'institutionCode' ? e.target.value.toUpperCase() : e.target.value
     setForm((p) => ({ ...p, [k]: v }))
     if (k === 'id') setIdStatus('idle')
     if (k === 'institutionCode') setInsttStatus('idle')
@@ -298,6 +299,7 @@ export default function SignupFormPage({ role }: Props) {
   }
 
   return (
+    <>
     <div className="min-h-screen bg-white px-6 py-10">
       <div className="max-w-[960px] mx-auto">
         <div className="mb-8">
@@ -513,6 +515,7 @@ export default function SignupFormPage({ role }: Props) {
                     inputRef={licenseInputRef}
                     onFile={setLicenseFile}
                     onDragging={setLicenseDragging}
+                    onDuplicate={() => setShowDupWarning(true)}
                   />
                   <p className="mt-1 text-[12px] text-ink-400">* 치료사 자격을 증명할 수 있는 파일을 첨부해주세요.</p>
                 </div>
@@ -545,6 +548,9 @@ export default function SignupFormPage({ role }: Props) {
         </div>
       </div>
     </div>
+
+    {showDupWarning && <DupWarningModal onClose={() => setShowDupWarning(false)} />}
+    </>
   )
 }
 
@@ -625,12 +631,14 @@ function FileDropRow({
   inputRef,
   onFile,
   onDragging,
+  onDuplicate,
 }: {
   file: File | null
   dragging: boolean
   inputRef: React.RefObject<HTMLInputElement>
   onFile: (f: File | null) => void
   onDragging: (v: boolean) => void
+  onDuplicate?: () => void
 }) {
   return (
     <div className="space-y-2">
@@ -652,7 +660,11 @@ function FileDropRow({
         <div
           onDragOver={e => { e.preventDefault(); onDragging(true) }}
           onDragLeave={() => onDragging(false)}
-          onDrop={e => { e.preventDefault(); onDragging(false); onFile(e.dataTransfer.files[0] ?? null) }}
+          onDrop={e => {
+            e.preventDefault(); onDragging(false)
+            if (file) { onDuplicate?.(); return }
+            onFile(e.dataTransfer.files[0] ?? null)
+          }}
           onClick={() => inputRef.current?.click()}
           className={`flex-1 min-h-[64px] border border-dashed rounded-[7px] flex items-center justify-center text-[13px] transition-colors cursor-pointer ${
             dragging ? 'border-brand bg-brand/5 text-brand' : 'border-[#B1B1B1] text-ink-400'
@@ -705,5 +717,29 @@ function OutlineButton({
     >
       {children}
     </button>
+  )
+}
+
+export function DupWarningModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div className="flex flex-col items-center gap-5" onClick={e => e.stopPropagation()}>
+        <div className="relative w-[80px] h-[100px]">
+          <svg width="80" height="100" viewBox="0 0 80 100" fill="none">
+            <rect x="1" y="1" width="78" height="98" rx="6" fill="white" stroke="#E0E0E0" strokeWidth="2"/>
+            <path d="M50 1V25H78" stroke="#E0E0E0" strokeWidth="2"/>
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M9 9L35 35M35 9L9 35" stroke="#FF3B3B" strokeWidth="5" strokeLinecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <p className="text-[18px] font-bold text-[#2F2E2E] whitespace-nowrap">한번에 하나의 파일만 업로드 가능합니다.</p>
+      </div>
+    </div>
   )
 }

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import RestrictedLayout from '../components/RestrictedLayout'
 import { useAuth } from '../lib/auth'
 import { useRouter } from '../lib/router'
+import { DupWarningModal } from './SignupFormPage'
 
 const INST_TYPES = ['병원', '치료센터', '그 외 기관 (예: 보건소, 아동복지센터)'] as const
 const SEAT_OPTIONS = ['사용안함', '1-10개', '11-20개', '21-30개', '31개 이상'] as const
@@ -14,6 +15,7 @@ export default function IadminSupplementPage() {
   const [instName, setInstName] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [showDupWarning, setShowDupWarning] = useState(false)
   const [doctorSeats, setDoctorSeats] = useState(SEAT_OPTIONS[0])
   const [therapistSeats, setTherapistSeats] = useState(SEAT_OPTIONS[0])
   const [submitting, setSubmitting] = useState(false)
@@ -88,6 +90,7 @@ export default function IadminSupplementPage() {
   }
 
   return (
+    <>
     <RestrictedLayout onBack={() => go({ name: 'list' })}>
       <div className="max-w-[960px] mx-auto">
         {/* 반려 사유 */}
@@ -158,7 +161,7 @@ export default function IadminSupplementPage() {
                 <div
                   onDragOver={e => { e.preventDefault(); setDragging(true) }}
                   onDragLeave={() => setDragging(false)}
-                  onDrop={e => { e.preventDefault(); setDragging(false); setFile(e.dataTransfer.files[0] ?? null) }}
+                  onDrop={e => { e.preventDefault(); setDragging(false); if (file) { setShowDupWarning(true); return } setFile(e.dataTransfer.files[0] ?? null) }}
                   onClick={() => inputRef.current?.click()}
                   className={`flex-1 min-h-[83px] border rounded-[7px] flex items-center justify-center text-[13px] cursor-pointer transition-colors ${
                     dragging ? 'border-[#005744] bg-[#005744]/5 text-[#005744]' : 'border-[#B1B1B1] text-[#AEAEAE]'
@@ -221,5 +224,8 @@ export default function IadminSupplementPage() {
         </div>
       </div>
     </RestrictedLayout>
+
+    {showDupWarning && <DupWarningModal onClose={() => setShowDupWarning(false)} />}
+    </>
   )
 }
