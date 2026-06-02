@@ -16,6 +16,7 @@ import DoctorsDataPage from './pages/DoctorsDataPage'
 import InstitutionEntitiesPage from './pages/InstitutionEntitiesPage'
 import InstitutionAdminsPage from './pages/InstitutionAdminsPage'
 import InstitutionApprovalPage from './pages/InstitutionApprovalPage'
+import TermsPage from './pages/TermsPage'
 import Layout from './components/Layout'
 
 function PlaceholderPage({ title }: { title: string }) {
@@ -58,6 +59,10 @@ function Routes() {
     case 'therapists':       return <TherapistsPage />
     case 'doctors':          return <DoctorsDataPage />
     case 'security':         return <PlaceholderPage title="보안" />
+    case 'security-child':    return <TermsPage role="child" />
+    case 'security-iadmin':   return <TermsPage role="iadmin" />
+    case 'security-doctor':   return <TermsPage role="doctor" />
+    case 'security-therapist':return <TermsPage role="therapist" />
     case 'content':          return <PlaceholderPage title="콘텐츠" />
     case 'versions':         return <PlaceholderPage title="버전관리" />
     case 'data':             return <PlaceholderPage title="데이터" />

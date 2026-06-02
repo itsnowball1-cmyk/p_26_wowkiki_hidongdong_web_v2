@@ -193,13 +193,13 @@ export default function StatsStaffDetail({
             </button>
           ))}
         </div>
-        <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+        <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="검색"
-            className="flex-1 text-[14px] outline-none placeholder:text-[#B5B5B5]"
+            className="flex-1 min-w-0 text-[14px] outline-none placeholder:text-[#B5B5B5]"
           />
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
             <circle cx="9" cy="9" r="5.5" stroke="#727272" strokeWidth="1.5"/>
@@ -300,3 +300,4 @@ export default function StatsStaffDetail({
 function Empty({ text }: { text: string }) {
   return <div className="py-12 text-center text-[14px] text-[#B5B5B5]">{text}</div>
 }
+

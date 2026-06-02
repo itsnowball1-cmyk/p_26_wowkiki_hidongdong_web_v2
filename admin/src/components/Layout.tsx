@@ -30,7 +30,15 @@ const MENU: MenuItem[] = [
       { label: '문자 설정',   route: 'sms-settings' },
     ],
   },
-  { type: 'link',  label: '보안',     route: 'security' },
+  {
+    type: 'group', label: '보안', firstRoute: 'security-iadmin',
+    children: [
+      { label: '아동',       route: 'security-child' },
+      { label: '기관 관리자', route: 'security-iadmin' },
+      { label: '의사',       route: 'security-doctor' },
+      { label: '치료사',     route: 'security-therapist' },
+    ],
+  },
   { type: 'link',  label: '콘텐츠',   route: 'content' },
   { type: 'link',  label: '버전관리', route: 'versions' },
   { type: 'link',  label: '마이페이지', route: 'mypage' },

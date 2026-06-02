@@ -107,14 +107,14 @@ export default function ChildrenDataPage() {
           >
             PDF 다운
           </button>
-          <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+          <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
             <input
               type="text"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
               placeholder="검색"
-              className="flex-1 text-[14px] outline-none placeholder:text-[#B5B5B5]"
+              className="flex-1 min-w-0 text-[14px] outline-none placeholder:text-[#B5B5B5]"
             />
             <button type="button" onClick={handleSearch}>
               <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
@@ -229,3 +229,4 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
     </button>
   )
 }
+

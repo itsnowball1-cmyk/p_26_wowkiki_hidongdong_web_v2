@@ -4,7 +4,8 @@ export type RouteName =
   | 'login' | 'dashboard' | 'institutions' | 'institution-detail' | 'institution-entities'
   | 'institution-admins' | 'institution-approval'
   | 'children' | 'stats' | 'notices' | 'notice-write' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
-  | 'sms-settings' | 'security' | 'content' | 'versions' | 'data' | 'mypage'
+  | 'sms-settings' | 'security' | 'security-child' | 'security-iadmin' | 'security-doctor' | 'security-therapist'
+  | 'content' | 'versions' | 'data' | 'mypage'
   | 'therapists' | 'doctors'
 
 type Route =
@@ -15,6 +16,11 @@ type Route =
   | { name: 'institution-approval'; id: string }
   | { name: 'institution-entities' }
   | { name: 'institution-admins' }
+  | { name: 'security' }
+  | { name: 'security-child' }
+  | { name: 'security-iadmin' }
+  | { name: 'security-doctor' }
+  | { name: 'security-therapist' }
   | { name: 'children' }
   | { name: 'stats' }
   | { name: 'notices' }
@@ -38,6 +44,10 @@ const RouterContext = createContext<RouterValue | null>(null)
 
 function parseHash(hash: string): Route {
   if (hash.startsWith('#/institution-approval/')) return { name: 'institution-approval', id: hash.split('#/institution-approval/')[1] }
+  if (hash.startsWith('#/security-child'))    return { name: 'security-child' }
+  if (hash.startsWith('#/security-iadmin'))   return { name: 'security-iadmin' }
+  if (hash.startsWith('#/security-doctor'))   return { name: 'security-doctor' }
+  if (hash.startsWith('#/security-therapist'))return { name: 'security-therapist' }
   if (hash.startsWith('#/institutions/')) return { name: 'institution-detail', id: hash.split('#/institutions/')[1] }
   if (hash.startsWith('#/institution-entities')) return { name: 'institution-entities' }
   if (hash.startsWith('#/institution-admins')) return { name: 'institution-admins' }
@@ -65,6 +75,10 @@ function parseHash(hash: string): Route {
 
 function toHash(r: Route): string {
   if (r.name === 'institution-approval') return `#/institution-approval/${r.id}`
+  if (r.name === 'security-child')    return '#/security-child'
+  if (r.name === 'security-iadmin')   return '#/security-iadmin'
+  if (r.name === 'security-doctor')   return '#/security-doctor'
+  if (r.name === 'security-therapist')return '#/security-therapist'
   if (r.name === 'institution-detail') return `#/institutions/${r.id}`
   if (r.name === 'institution-entities') return '#/institution-entities'
   if (r.name === 'institution-admins') return '#/institution-admins'

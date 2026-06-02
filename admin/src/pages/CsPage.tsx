@@ -90,7 +90,7 @@ export default function CsPage({ initialIdx }: { initialIdx?: number } = {}) {
           <p className="text-[25px] font-semibold text-[#000000]">
             미답변 문의사항 <span className="text-[#FF4E4E]">{unanswered}</span>
           </p>
-          <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+          <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
             <input
               type="text"
               value={searchInput}
@@ -183,3 +183,4 @@ export default function CsPage({ initialIdx }: { initialIdx?: number } = {}) {
     </>
   )
 }
+

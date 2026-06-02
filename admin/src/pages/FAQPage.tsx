@@ -103,7 +103,7 @@ export default function FAQPage() {
           전체 게시물 <span className="text-[#005744]">{total}</span>
         </p>
         <div className="flex items-center gap-3">
-          <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+          <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
             <input
               type="text"
               value={searchInput}
@@ -233,3 +233,4 @@ export default function FAQPage() {
 function Empty({ text }: { text: string }) {
   return <div className="py-12 text-center text-[14px] text-[#B5B5B5]">{text}</div>
 }
+

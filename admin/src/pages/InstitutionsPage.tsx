@@ -57,6 +57,56 @@ export default function InstitutionsPage() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [fileLoading, setFileLoading] = useState<number | null>(null)
+  const [downloadModal, setDownloadModal] = useState(false)
+  const [downloadTypes, setDownloadTypes] = useState<Set<string>>(new Set(['child', 'doctor', 'teacher']))
+  const [downloadLoading, setDownloadLoading] = useState(false)
+
+  const toggleDownloadType = (t: string) => {
+    if (t === 'all') {
+      const all = new Set(['child', 'doctor', 'teacher'])
+      setDownloadTypes(prev => prev.size === 3 ? new Set() : all)
+      return
+    }
+    setDownloadTypes(prev => {
+      const next = new Set(prev)
+      next.has(t) ? next.delete(t) : next.add(t)
+      return next
+    })
+  }
+
+  const handleDownload = async () => {
+    if (downloadTypes.size === 0) return
+    setDownloadLoading(true)
+    try {
+      const types = [...downloadTypes].join(',')
+      const res = await fetch(`/api/admin/institutions/download?types=${types}`, { headers: HEADERS })
+      if (!res.ok) return
+      const data = await res.json() as {
+        type: string; name: string; code: string; instt_code: string; instt_name: string
+        regist_date: string; birth_date: string; gender: string
+        doctor_name: string; therapist_name: string; child_count: number | null
+      }[]
+
+      const escape = (v: string | number | null) => `"${String(v ?? '-').replace(/"/g, '""')}"`
+      const headers = ['유형', '이름', '식별코드', '기관코드', '기관명', '가입일', '생년월일', '성별', '담당의사', '담당치료사', '담당아동수']
+      const rows = data.map(r => [
+        r.type, r.name, r.code, r.instt_code, r.instt_name,
+        r.regist_date, r.birth_date, r.gender,
+        r.doctor_name, r.therapist_name,
+        r.child_count !== null ? r.child_count : '-'
+      ])
+      const csv = [headers.map(escape).join(','), ...rows.map(r => r.map(escape).join(','))].join('\n')
+      const BOM = '﻿'
+      const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `사용자목록_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+      setDownloadModal(false)
+    } finally { setDownloadLoading(false) }
+  }
 
   const fetchData = async (t: TabName) => {
     setLoading(true)
@@ -237,6 +287,7 @@ export default function InstitutionsPage() {
               <>
                 <button
                   type="button"
+                  onClick={() => setDownloadModal(true)}
                   className="h-[40px] px-4 border border-[#005744] text-[#005744] rounded-[5px] text-[14px] font-medium hover:bg-[#005744] hover:text-white transition"
                 >
                   사용자 목록 다운로드
@@ -267,13 +318,13 @@ export default function InstitutionsPage() {
                 <path d="M1 1L6 6L11 1" stroke="#727272" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </div>
-            <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+            <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
               <input
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="검색"
-                className="flex-1 text-[14px] outline-none placeholder:text-[#B5B5B5]"
+                className="flex-1 min-w-0 text-[14px] outline-none placeholder:text-[#B5B5B5]"
               />
               <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
                 <circle cx="7" cy="7" r="5.5" stroke="#ADB5BD" strokeWidth="1.5"/>
@@ -472,6 +523,63 @@ export default function InstitutionsPage() {
           </>
         )}
       </div>
+      {/* 사용자 목록 다운로드 모달 */}
+      {downloadModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-[10px] w-[500px] px-8 py-8 relative flex flex-col gap-6">
+            <button type="button" onClick={() => setDownloadModal(false)} className="absolute top-5 right-5 text-[#707070] hover:text-[#333]">
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M1 1L14 14M14 1L1 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            </button>
+            <div>
+              <p className="text-[20px] font-bold text-[#2F2E2E] mb-2">사용자 목록 다운로드</p>
+              <p className="text-[14px] text-[#585858] leading-[22px]">
+                다운로드할 사용자 유형을 선택해 주세요.<br/>
+                선택한 유형에 해당하는 사용자 목록이 파일로 다운로드됩니다.
+              </p>
+            </div>
+            <div className="bg-[#F5F5F5] rounded-[8px] px-6 py-5 flex items-center justify-center gap-8">
+              {([['child', '아동'], ['doctor', '의사'], ['teacher', '치료사'], ['all', '전체']] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={() => toggleDownloadType(key)}
+                    className={`w-[22px] h-[22px] rounded-[4px] border flex items-center justify-center transition-colors ${
+                      key === 'all'
+                        ? (downloadTypes.size === 3 ? 'bg-[#005744] border-[#005744]' : 'bg-white border-[#C0C0C0]')
+                        : (downloadTypes.has(key) ? 'bg-[#005744] border-[#005744]' : 'bg-white border-[#C0C0C0]')
+                    }`}
+                  >
+                    {(key === 'all' ? downloadTypes.size === 3 : downloadTypes.has(key)) && (
+                      <svg width="12" height="10" viewBox="0 0 12 10" fill="none">
+                        <path d="M1 5L4.5 8.5L11 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </button>
+                  <span className="text-[16px] text-[#2F2E2E]">{label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-4 justify-center">
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={downloadTypes.size === 0 || downloadLoading}
+                className="w-[160px] h-[48px] rounded-[8px] bg-[#005744] text-white text-[15px] font-semibold hover:opacity-90 transition disabled:opacity-50"
+              >
+                {downloadLoading ? '다운로드 중…' : '목록 다운로드'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDownloadModal(false)}
+                className="w-[160px] h-[48px] rounded-[8px] border border-[#005744] text-[#005744] text-[15px] font-semibold hover:bg-[#005744] hover:text-white transition"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 비활성화 확인 모달 */}
       {deactivateModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -486,11 +594,11 @@ export default function InstitutionsPage() {
               </svg>
             </button>
             <p className="text-[20px] font-bold text-[#2F2E2E]">기관 비활성화</p>
-            <p className="text-[12px] text-[#2F2E2E] text-center leading-[18px]">
-              <span className="font-semibold">
-                {selected.size === 1
-                  ? (filtered.find(r => selected.has(r.idx))?.name ?? '')
-                  : `선택한 ${selected.size}개 기관`}
+            <p className="text-[14px] text-[#2F2E2E] text-center leading-[22px]">
+              <span className="font-bold">
+                [{selected.size === 1
+                  ? (filtered.find(r => selected.has(r.idx))?.inst_name ?? '')
+                  : `선택한 ${selected.size}개 기관`}]
               </span>
               {' '}을 비활성화 하시겠습니까?<br/>
               비활성화 시 해당 기관 및 소속 사용자 계정이 즉시 비활성 상태로 전환됩니다.
@@ -530,14 +638,14 @@ export default function InstitutionsPage() {
               </svg>
             </button>
             <p className="text-[20px] font-bold text-[#2F2E2E]">기관 활성화</p>
-            <p className="text-[12px] text-[#2F2E2E] text-center leading-[18px]">
-              <span className="font-semibold">
-                {selected.size === 1
+            <p className="text-[14px] text-[#2F2E2E] text-center leading-[22px]">
+              <span className="font-bold">
+                [{selected.size === 1
                   ? (filtered.find(r => selected.has(r.idx))?.inst_name ?? '')
-                  : `선택한 ${selected.size}개 기관`}
+                  : `선택한 ${selected.size}개 기관`}]
               </span>
               {' '}을 활성화 하시겠습니까?<br/>
-              활성화 시 해당 기관 및 소속 사용자 계정이 즉시 활성 상태로 전환됩니다.
+              활성화 시 해당 기관 및 소속 사용자는 웹 서비스 이용이 즉시 가능합니다.
             </p>
             <div className="flex gap-4">
               <button
@@ -706,3 +814,4 @@ function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => voi
     </button>
   )
 }
+

@@ -58,14 +58,14 @@ export default function InstitutionEntitiesPage() {
           <span className="text-[#919191] font-semibold">기관 목록</span>
           <span className="text-[#005744] font-semibold ml-2">{total}</span>
         </p>
-        <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+        <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
           <input
             type="text"
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
             placeholder="기관명 / 기관코드 검색"
-            className="flex-1 text-[14px] outline-none placeholder:text-[#B5B5B5]"
+            className="flex-1 min-w-0 text-[14px] outline-none placeholder:text-[#B5B5B5]"
           />
           <button type="button" onClick={handleSearch}>
             <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
@@ -150,3 +150,4 @@ export default function InstitutionEntitiesPage() {
     </Layout>
   )
 }
+

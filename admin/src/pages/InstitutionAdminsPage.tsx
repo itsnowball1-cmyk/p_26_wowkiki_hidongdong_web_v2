@@ -59,7 +59,7 @@ export default function InstitutionAdminsPage() {
         <p className="text-[25px] font-semibold text-[#000000]">
           전체 <span className="text-[#005744]">{total}</span>
         </p>
-        <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+        <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
           <input
             type="text"
             value={searchInput}
@@ -133,3 +133,4 @@ export default function InstitutionAdminsPage() {
     </Layout>
   )
 }
+

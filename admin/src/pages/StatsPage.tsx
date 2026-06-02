@@ -295,13 +295,13 @@ export default function StatsPage() {
                 <path d="M1 1L6 6L11 1" stroke="#727272" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </div>
-            <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px]">
+            <div className="flex items-center h-[40px] px-3 border border-[#ADB5BD] rounded-[5px] gap-2 w-[220px] overflow-hidden">
               <input
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="검색"
-                className="flex-1 text-[14px] outline-none placeholder:text-[#B5B5B5]"
+                className="flex-1 min-w-0 text-[14px] outline-none placeholder:text-[#B5B5B5]"
               />
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <rect x="3" y="4" width="14" height="13" rx="1.5" stroke="#ADB5BD" strokeWidth="1.5"/>
@@ -371,3 +371,4 @@ function CheckboxBtn({ checked, onChange }: { checked: boolean; onChange: () => 
     </button>
   )
 }
+

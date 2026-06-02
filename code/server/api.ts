@@ -802,6 +802,101 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       })
     }
 
+    // ── 약관 관리 ─────────────────────────────────────────────────────────────
+
+    // GET /api/terms/current?role=iadmin|doctor|therapist — 현재 활성 약관 목록 (공개)
+    if (path === '/api/terms/current' && method === 'GET') {
+      const role = (url.searchParams.get('role') ?? '').trim()
+      try {
+        const whereClause = role
+          ? `is_active = 1 AND term_type LIKE ?`
+          : `is_active = 1`
+        const params = role ? [`${role}_%`] : []
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT term_type, title, required, version, content
+           FROM tb_terms WHERE ${whereClause}
+           ORDER BY created_at ASC`,
+          params
+        )
+        return json(rows as RowDataPacket[])
+      } catch { return json([]) }
+    }
+
+    // GET /api/admin/terms?role=iadmin|doctor|therapist — 현재 활성 약관 (어드민, 메타 포함)
+    if (path === '/api/admin/terms' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const role = (url.searchParams.get('role') ?? '').trim()
+      try {
+        const whereClause = role ? `is_active = 1 AND term_type LIKE ?` : `is_active = 1`
+        const params = role ? [`${role}_%`] : []
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, term_type, title, required, version, content, change_summary,
+                  DATE_FORMAT(created_at, '%Y.%m.%d') AS created_date
+           FROM tb_terms WHERE ${whereClause} ORDER BY created_at ASC`,
+          params
+        )
+        return json(rows as RowDataPacket[])
+      } catch { return json([]) }
+    }
+
+    // POST /api/admin/terms/new-version — 새 버전 등록 (applyToAll: true 시 전체 역할 일괄 적용)
+    if (path === '/api/admin/terms/new-version' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as {
+        term_type?: string; title?: string; required?: boolean
+        version?: string; content?: string; change_summary?: string
+        applyToAll?: boolean
+      }
+      if (!body.term_type || !body.title || !body.content) return err(400, '필수 항목 누락')
+      try {
+        const suffix = body.term_type.substring(body.term_type.indexOf('_'))
+        const ALL_ROLES = ['iadmin', 'doctor', 'therapist']
+        const targetTypes = body.applyToAll
+          ? ALL_ROLES.map(r => ({ type: `${r}${suffix}`, title: body.title! }))
+          : [{ type: body.term_type, title: body.title! }]
+
+        for (const t of targetTypes) {
+          await conn.query(`UPDATE tb_terms SET is_active = 0 WHERE term_type = ? AND is_active = 1`, [t.type])
+          await conn.query(
+            `INSERT INTO tb_terms (term_type, title, required, version, content, change_summary, is_active, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, NOW())`,
+            [t.type, t.title, body.required ? 1 : 0,
+             body.version ?? 'v1.0', body.content, body.change_summary ?? null]
+          )
+        }
+        return json({ ok: true, applied: targetTypes.length })
+      } catch (e) { return err(500, '약관 등록 실패') }
+    }
+
+    // GET /api/admin/terms/history — 약관 개정이력
+    if (path === '/api/admin/terms/history' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const page = Math.max(1, Number(url.searchParams.get('page') ?? 1))
+      const limit = 20
+      const typesParam = url.searchParams.get('types') ?? ''
+      const search = (url.searchParams.get('search') ?? '').trim()
+      const types = typesParam ? typesParam.split(',') : []
+
+      let where = '1=1'
+      const params: unknown[] = []
+      if (types.length > 0) { where += ` AND term_type IN (${ph(types.length)})`; params.push(...types) }
+      if (search) { where += ` AND (title LIKE ? OR change_summary LIKE ? OR version LIKE ?)`; const s = `%${search}%`; params.push(s, s, s) }
+
+      try {
+        const [[{ total }]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS total FROM tb_terms WHERE ${where}`, params
+        ) as [RowDataPacket[], unknown]
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, term_type, title, version, change_summary, is_active,
+                  DATE_FORMAT(created_at, '%Y.%m.%d %H:%i') AS created_at
+           FROM tb_terms WHERE ${where}
+           ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+          [...params, limit, (page - 1) * limit]
+        )
+        return json({ items: rows as RowDataPacket[], total: Number(total) })
+      } catch { return json({ items: [], total: 0 }) }
+    }
+
     // GET /api/admin/badge-counts — 사이드바 배지용 승인 대기 건수
     if (path === '/api/admin/badge-counts' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
@@ -1548,6 +1643,47 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         is_male:     r.is_male_yn === 'Y',
         regist_date: fmtDate(r.regist_date) ?? '-',
         child_count: r.child_count !== null ? Number(r.child_count) : undefined,
+      })))
+    }
+
+    // GET /api/admin/institutions/download?types=child,doctor,teacher — 사용자 목록 다운로드
+    if (path === '/api/admin/institutions/download' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const typesParam = url.searchParams.get('types') ?? 'child,doctor,teacher'
+      const types = typesParam.split(',').map(t => t.trim()).filter(Boolean)
+      const mtypeMap: Record<string, string> = { child: 'child', doctor: 'doctor', teacher: 'teacher' }
+      const mtypes = types.map(t => mtypeMap[t]).filter(Boolean)
+      if (mtypes.length === 0) return err(400, '유형을 선택해주세요.')
+
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT m.mtype, m.name, m.code, UPPER(m.instt_code) AS instt_code,
+                COALESCE(i.name, m.instt_code) AS instt_name,
+                DATE_FORMAT(m.regist_date, '%Y.%m.%d') AS regist_date,
+                m.birth_date, m.gender,
+                (SELECT d.name FROM tb_member d WHERE d.code = m.doctor_code AND d.mtype='doctor' LIMIT 1) AS doctor_name,
+                (SELECT t.name FROM tb_member t WHERE t.code = m.teacher_code AND t.mtype='teacher' LIMIT 1) AS therapist_name,
+                (SELECT COUNT(*) FROM tb_member c WHERE c.mtype='child' AND c.doctor_code=m.code AND c.delete_yn='N') AS doctor_child_count,
+                (SELECT COUNT(*) FROM tb_member c WHERE c.mtype='child' AND c.teacher_code=m.code AND c.delete_yn='N') AS teacher_child_count
+         FROM tb_member m
+         LEFT JOIN tb_instt i ON UPPER(i.instt_code) = UPPER(m.instt_code)
+         WHERE m.mtype IN (${ph(mtypes.length)}) AND m.delete_yn='N' AND m.approval_status IS NULL
+         ORDER BY m.mtype, m.instt_code, m.regist_date`,
+        mtypes
+      )
+
+      return json((rows as RowDataPacket[]).map(r => ({
+        type:           r.mtype === 'child' ? '아동' : r.mtype === 'doctor' ? '의사' : '치료사',
+        name:           r.name ?? '-',
+        code:           r.code ?? '-',
+        instt_code:     r.instt_code ?? '-',
+        instt_name:     r.instt_name ?? '-',
+        regist_date:    r.regist_date ?? '-',
+        birth_date:     r.birth_date ? String(r.birth_date).slice(0, 10) : '-',
+        gender:         r.gender ?? '-',
+        doctor_name:    r.doctor_name ?? '-',
+        therapist_name: r.therapist_name ?? '-',
+        child_count:    r.mtype === 'doctor' ? Number(r.doctor_child_count ?? 0)
+                      : r.mtype === 'teacher' ? Number(r.teacher_child_count ?? 0) : null,
       })))
     }
 
