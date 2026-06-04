@@ -7,6 +7,7 @@ type DoctorRow = {
   idx: number
   name: string
   code: string | null
+  instt_code: string | null
   instt_name: string
   child_count: number
   regist_date: string
@@ -130,7 +131,9 @@ export default function DoctorsDataPage() {
           >
             <span><Checkbox checked={selected.has(r.idx)} onChange={() => toggleOne(r.idx)} /></span>
             <span className="text-[#585858]">{(page - 1) * PAGE_SIZE + i + 1}</span>
-            <span className="text-[#585858] truncate pr-2">{r.instt_name}</span>
+            <span className="text-[#585858] truncate pr-2">
+              {r.instt_name}{r.instt_code ? ` (${r.instt_code})` : ''}
+            </span>
             <span className="text-[#585858]">{r.name}</span>
             <span className="text-[#484848]">{r.code ?? '-'}</span>
             <span className="text-[#484848]">{r.child_count}</span>

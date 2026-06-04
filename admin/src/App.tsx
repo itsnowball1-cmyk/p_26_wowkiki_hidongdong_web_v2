@@ -12,10 +12,12 @@ import CsPage from './pages/CsPage'
 import SmsSettingsPage from './pages/SmsSettingsPage'
 import TherapistsPage from './pages/TherapistsPage'
 import ChildrenDataPage from './pages/ChildrenDataPage'
+import ChildDetailPage from './pages/ChildDetailPage'
 import DoctorsDataPage from './pages/DoctorsDataPage'
 import InstitutionEntitiesPage from './pages/InstitutionEntitiesPage'
 import InstitutionAdminsPage from './pages/InstitutionAdminsPage'
 import InstitutionApprovalPage from './pages/InstitutionApprovalPage'
+import MypagePage from './pages/MypagePage'
 import TermsPage from './pages/TermsPage'
 import Layout from './components/Layout'
 
@@ -48,6 +50,7 @@ function Routes() {
     case 'institution-entities':  return <InstitutionEntitiesPage />
     case 'institution-admins':    return <InstitutionAdminsPage />
     case 'children':         return <ChildrenDataPage />
+    case 'child-detail':     return <ChildDetailPage id={route.id} />
     case 'stats':            return <StatsPage />
     case 'notices':          return <NoticesPage />
     case 'notice-write':     return <NoticesPage initialWrite={true} />
@@ -66,7 +69,7 @@ function Routes() {
     case 'content':          return <PlaceholderPage title="콘텐츠" />
     case 'versions':         return <PlaceholderPage title="버전관리" />
     case 'data':             return <PlaceholderPage title="데이터" />
-    case 'mypage':           return <PlaceholderPage title="마이페이지" />
+    case 'mypage':           return <MypagePage />
     default:                 return <DashboardPage />
   }
 }

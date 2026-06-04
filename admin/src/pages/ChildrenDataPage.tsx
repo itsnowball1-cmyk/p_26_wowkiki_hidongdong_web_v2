@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
+import { useRouter } from '../lib/router'
 
 type StatusFilter = 'active' | 'inactive' | 'all'
 
@@ -21,6 +22,7 @@ const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { retu
 const PAGE_SIZE = 20
 
 export default function ChildrenDataPage() {
+  const { go } = useRouter()
   const [rows, setRows] = useState<ChildRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -154,9 +156,10 @@ export default function ChildrenDataPage() {
             ) : rows.map((r, i) => (
               <div
                 key={r.idx}
-                className={`grid grid-cols-[30px_50px_130px_130px_180px_100px_80px_120px_120px_120px_120px] px-4 py-3 items-center text-[14px] text-center ${i < rows.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
+                onClick={() => go({ name: 'child-detail', id: r.idx })}
+                className={`grid grid-cols-[30px_50px_130px_130px_180px_100px_80px_120px_120px_120px_120px] px-4 py-3 items-center text-[14px] text-center cursor-pointer hover:bg-[#F5F5F5] transition-colors ${i < rows.length - 1 ? 'border-b border-[#DEDEDE]' : ''}`}
               >
-                <span className="flex items-center justify-center">
+                <span className="flex items-center justify-center" onClick={e => e.stopPropagation()}>
                   <Checkbox checked={selected.has(r.idx)} onChange={() => toggleOne(r.idx)} />
                 </span>
                 <span className="text-[#585858]">{(page - 1) * PAGE_SIZE + i + 1}</span>

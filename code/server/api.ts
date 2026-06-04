@@ -77,6 +77,9 @@ async function sendSmsAligo(env: Env, phone: string, msg: string): Promise<void>
   })
 }
 
+// ─── 휴대폰 인증 코드 저장소 (5분 유효) ────────────────────────────────────────
+const phoneVerifyCodes = new Map<string, { code: string; expires: number }>()
+
 // ─── DB 연결 ─────────────────────────────────────────────────────────────────
 
 type StaffRow = RowDataPacket & {
@@ -420,6 +423,8 @@ async function handleLogin(request: Request, conn: Connection): Promise<Response
     code:            row.code ?? null,
     name:            row.name,
     role:            mtypeToRole(row.mtype),
+    mtype:           row.mtype,
+    idx:             row.idx,
     institutionCode: row.instt_code,
     department:      row.depart_code ?? null,
     schedule:        null
@@ -501,7 +506,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       }
       const code = `${instt_code}_${prefix}_${String(seq).padStart(3, '0')}`
 
-      const approvalStatus = role === 'therapist' ? '승인대기' : null
+      // TODO: 와우키키 웹 공식 배포 시 아래를 원래대로 복구할 것:
+      //   const approvalStatus = role === 'therapist' ? '승인대기' : null
+      const approvalStatus = null  // 임시: 치료사 자동 승인 (배포 전 테스트용)
       const [insertResult] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, depart_code, approval_status, license_file_nm, delete_yn, regist_date)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', NOW())`,
@@ -897,6 +904,95 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       } catch { return json({ items: [], total: 0 }) }
     }
 
+    // GET /api/admin/mypage — 슈퍼/일반 관리자 목록
+    if (path === '/api/admin/mypage' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const [sadmins] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, name, id AS nickname, email, phone FROM tb_member WHERE mtype='sadmin' AND delete_yn='N' ORDER BY idx ASC`
+      )
+      const [wadmins] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, name, id AS nickname, email, phone FROM tb_member WHERE mtype='wadmin' AND delete_yn='N' ORDER BY idx ASC`
+      )
+      return json({
+        current_idx: user.idx,
+        sadmins: (sadmins as RowDataPacket[]).map((r, i) => ({ idx: r.idx, order: i + 1, name: r.name ?? '-', nickname: r.nickname ?? '-', email: r.email ?? '-', phone: r.phone ?? '-' })),
+        wadmins: (wadmins as RowDataPacket[]).map((r, i) => ({ idx: r.idx, order: i + 1, name: r.name ?? '-', nickname: r.nickname ?? '-', email: r.email ?? '-', phone: r.phone ?? '-' })),
+      })
+    }
+
+    // POST /api/admin/send-phone-code — 관리자 추가 시 휴대폰 인증 코드 발송
+    if (path === '/api/admin/send-phone-code' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { phone?: string }
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      if (!phone || phone.length < 10) return err(400, '유효한 휴대폰 번호를 입력해주세요.')
+      const code = String(Math.floor(100000 + Math.random() * 900000))
+      phoneVerifyCodes.set(phone, { code, expires: Date.now() + 5 * 60 * 1000 })
+      try {
+        await sendSmsAligo(env, phone, `[하이동동] 관리자 인증번호: ${code} (5분 이내 입력)`)
+        return json({ ok: true })
+      } catch {
+        phoneVerifyCodes.delete(phone)
+        return err(500, 'SMS 발송에 실패했습니다.')
+      }
+    }
+
+    // POST /api/admin/verify-phone-code — 휴대폰 인증 코드 확인
+    if (path === '/api/admin/verify-phone-code' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { phone?: string; code?: string }
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      const entry = phoneVerifyCodes.get(phone)
+      if (!entry) return err(400, '인증번호를 먼저 발송해주세요.')
+      if (Date.now() > entry.expires) { phoneVerifyCodes.delete(phone); return err(400, '인증번호가 만료되었습니다.') }
+      if (entry.code !== body.code) return err(400, '인증번호가 일치하지 않습니다.')
+      phoneVerifyCodes.delete(phone)
+      return json({ ok: true })
+    }
+
+    // PUT /api/admin/mypage — 내 정보 수정 (이름, 이메일, 비밀번호)
+    if (path === '/api/admin/mypage' && method === 'PUT') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { name?: string; email?: string; pw?: string; current_pw?: string }
+      if (body.pw && body.current_pw) {
+        const [[m]] = await conn.query<RowDataPacket[]>(`SELECT pw FROM tb_member WHERE idx = ? LIMIT 1`, [user.idx]) as [RowDataPacket[], unknown]
+        if (!m || (m as RowDataPacket).pw !== body.current_pw) return err(400, '현재 비밀번호가 일치하지 않습니다.')
+      }
+      const sets: string[] = []
+      const vals: unknown[] = []
+      if (body.name) { sets.push('name = ?'); vals.push(body.name) }
+      if (body.email) { sets.push('email = ?'); vals.push(body.email) }
+      if (body.pw) { sets.push('pw = ?'); vals.push(body.pw) }
+      if (sets.length === 0) return err(400, '수정할 항목이 없습니다.')
+      sets.push('update_date = NOW()')
+      vals.push(user.idx)
+      await conn.query(`UPDATE tb_member SET ${sets.join(', ')} WHERE idx = ?`, vals)
+      return json({ ok: true })
+    }
+
+    // POST /api/admin/wadmin — 일반 관리자 추가 (sadmin만)
+    if (path === '/api/admin/wadmin' && method === 'POST') {
+      if (user.mtype !== 'sadmin') return err(403, '슈퍼 관리자만 가능합니다.')
+      const body = (await request.json().catch(() => ({}))) as { id?: string; pw?: string; name?: string; nickname?: string; email?: string; phone?: string }
+      if (!body.id || !body.pw || !body.name) return err(400, '필수 항목 누락')
+      const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [body.id])
+      if ((exist as RowDataPacket[]).length > 0) return err(409, '이미 사용 중인 아이디입니다.')
+      await conn.query(
+        `INSERT INTO tb_member (id, pw, name, email, phone, mtype, delete_yn, regist_date) VALUES (?, ?, ?, ?, ?, 'wadmin', 'N', NOW())`,
+        [body.id, body.pw, body.name, body.email ?? null, body.phone ?? null]
+      )
+      return json({ ok: true })
+    }
+
+    // DELETE /api/admin/wadmin — 일반 관리자 삭제 (sadmin만)
+    if (path === '/api/admin/wadmin' && method === 'DELETE') {
+      if (user.mtype !== 'sadmin') return err(403, '슈퍼 관리자만 가능합니다.')
+      const body = (await request.json().catch(() => ({}))) as { idxs?: number[] }
+      if (!body.idxs || body.idxs.length === 0) return err(400, '필수 항목 누락')
+      await conn.query(`UPDATE tb_member SET delete_yn='Y', update_date=NOW() WHERE idx IN (${ph(body.idxs.length)}) AND mtype='wadmin'`, body.idxs)
+      return json({ ok: true })
+    }
+
     // GET /api/admin/badge-counts — 사이드바 배지용 승인 대기 건수
     if (path === '/api/admin/badge-counts' && method === 'GET') {
       if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
@@ -1065,6 +1161,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
           idx:         r.idx,
           name:        r.name,
           code:        r.code ?? null,
+          instt_code:  r.instt_code ?? null,
           instt_name:  r.instt_name ?? r.instt_code,
           child_count: Number(r.child_count ?? 0),
           regist_date: fmtDate(r.regist_date) ?? '-',
@@ -1131,6 +1228,125 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         })),
         total: Number(total),
       })
+    }
+
+    // GET /api/admin/children-all/:id — wowkiki 아동 상세 (기관 필터 없음)
+    const wadminChildDetailMatch = path.match(/^\/api\/admin\/children-all\/(\d+)$/)
+    if (wadminChildDetailMatch && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const cid = Number(wadminChildDetailMatch[1])
+      const [childRows] = await conn.query<RowDataPacket[]>(
+        `SELECT
+           c.idx AS id,
+           c.id AS identifier,
+           c.name,
+           c.birth_date,
+           c.id AS app_login_id,
+           c.attribution AS primary_diagnosis,
+           c.regist_date AS service_started_at,
+           c.admin_memo,
+           c.doctor_memo,
+           c.teacher_memo,
+           c.update_date,
+           d.code AS doctor_id,
+           d.name AS doctor_name,
+           d.depart_code AS doctor_department,
+           t.code AS therapist_id,
+           t.name AS therapist_name,
+           t.depart_code AS therapist_department,
+           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+            FROM tb_schedule s
+            WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
+            ORDER BY s.start_date LIMIT 1) AS next_doctor_appointment,
+           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+            FROM tb_schedule s
+            WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
+            ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
+         FROM tb_member c
+         LEFT JOIN tb_member d ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
+         LEFT JOIN tb_member t ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
+         WHERE c.idx = ? AND c.mtype = 'child'
+         LIMIT 1`,
+        [cid]
+      )
+      type WCRow = RowDataPacket & {
+        birth_date: unknown; service_started_at: unknown; update_date: unknown
+        admin_memo: string|null; doctor_memo: string|null; teacher_memo: string|null
+      }
+      const child = childRows[0] as WCRow | undefined
+      if (!child) return err(404, 'not found')
+      const updatedAt = fmtDate(child.update_date) ?? '-'
+      const { admin_memo, doctor_memo, teacher_memo, update_date, birth_date, service_started_at, ...rest } = child
+      return json({
+        child: {
+          ...rest,
+          birth_date: fmtDate(birth_date),
+          age_label: ageLabel(birth_date),
+          service_started_at: fmtDate(service_started_at),
+          therapist_schedule: null
+        },
+        memos: [
+          { type: 'admin',     content: admin_memo    ?? '', updated_at: updatedAt },
+          { type: 'doctor',    content: doctor_memo   ?? '', updated_at: updatedAt },
+          { type: 'therapist', content: teacher_memo  ?? '', updated_at: updatedAt }
+        ]
+      })
+    }
+
+    // GET /api/admin/children-all/:id/diagnoses
+    const wadminDiagMatch = path.match(/^\/api\/admin\/children-all\/(\d+)\/diagnoses$/)
+    if (wadminDiagMatch && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const cid = Number(wadminDiagMatch[1])
+      const [cidRows] = await conn.query<RowDataPacket[]>(
+        'SELECT id FROM tb_member WHERE idx = ? AND mtype = ? LIMIT 1', [cid, 'child']
+      )
+      const memberId = (cidRows[0] as { id: string } | undefined)?.id
+      if (!memberId) return err(404, 'not found')
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, act_date, analysislog
+         FROM tb_childact_report
+         WHERE id = ? AND use_type = 'diagnostic'
+         ORDER BY act_date DESC, idx DESC`,
+        [memberId]
+      )
+      return json((rows as Array<RowDataPacket & { idx: number; act_date: unknown; analysislog: string|null }>).map(r => {
+        const p = parseAnalysislog(r.analysislog)
+        return { id: r.idx, examined_at: fmtDateTime(r.act_date), duration_label: p.duration_label, accuracy_pct: p.accuracy_pct, summary: p.summary, consonant_pct: p.consonant_pct, word_pos_pct: p.word_pos_pct, vowel_pct: p.vowel_pct }
+      }))
+    }
+
+    // GET /api/admin/children-all/:id/treatments
+    const wadminTreatMatch = path.match(/^\/api\/admin\/children-all\/(\d+)\/treatments$/)
+    if (wadminTreatMatch && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const cid = Number(wadminTreatMatch[1])
+      const [cidRows2] = await conn.query<RowDataPacket[]>(
+        'SELECT id FROM tb_member WHERE idx = ? AND mtype = ? LIMIT 1', [cid, 'child']
+      )
+      const mId = (cidRows2[0] as { id: string } | undefined)?.id
+      if (!mId) return err(404, 'not found')
+      const [trows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, act_date, analysislog,
+                JSON_LENGTH(JSON_EXTRACT(speechlog, '$.logLst')) AS speech_count
+         FROM tb_childact_report
+         WHERE id = ? AND use_type = 'training'
+         ORDER BY act_date DESC, idx DESC`,
+        [mId]
+      )
+      return json((trows as Array<RowDataPacket & { idx: number; act_date: unknown; analysislog: string|null; speech_count: number|null }>).map((r, i) => {
+        const p = parseAnalysislog(r.analysislog)
+        return {
+          id:               r.idx,
+          treated_at:       fmtDateTime(r.act_date),
+          session_no:       trows.length - i,
+          trained_sound:    p.trained_sound,
+          tags_json:        p.tags_json,
+          try_count:        p.try_count ?? r.speech_count ?? null,
+          avg_accuracy_pct: p.accuracy_pct,
+          duration_minutes: p.duration_minutes
+        }
+      }))
     }
 
     // GET /api/admin/therapists?status=active|inactive|all&search=&page=
@@ -1224,6 +1440,88 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         }
       }
       return json({ ok: true, approved: approvedIdxs.length })
+    }
+
+    // GET /api/admin/therapist-detail?idx= — 치료사 상세 조회
+    if (path === '/api/admin/therapist-detail' && method === 'GET') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const idx = Number(url.searchParams.get('idx') ?? 0)
+      if (!idx) return err(400, '필수 항목 누락')
+      const [[member]] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, id, name, phone, email, instt_code, depart_code, license_file_nm, approval_status, admin_memo,
+                DATE_FORMAT(regist_date, '%Y.%m.%d %H:%i') AS regist_date
+         FROM tb_member WHERE idx = ? AND mtype = 'teacher' LIMIT 1`, [idx]
+      ) as [RowDataPacket[], unknown]
+      if (!member) return err(404, '치료사를 찾을 수 없습니다.')
+
+      // 파일 (tb_license_file 또는 tb_approval_history)
+      let fileIdx: number | null = null
+      let fileNm: string | null = null
+      try {
+        const [[lf]] = await conn.query<RowDataPacket[]>(
+          `SELECT idx, source_file_nm FROM tb_license_file WHERE member_idx = ? ORDER BY idx DESC LIMIT 1`, [idx]
+        ) as [RowDataPacket[], unknown]
+        if (lf) { fileIdx = (lf as RowDataPacket).idx; fileNm = (lf as RowDataPacket).source_file_nm ?? null }
+      } catch {}
+      if (!fileIdx) {
+        try {
+          const [[ah]] = await conn.query<RowDataPacket[]>(
+            `SELECT idx, source_file_nm FROM tb_approval_history WHERE member_idx = ? ORDER BY idx DESC LIMIT 1`, [idx]
+          ) as [RowDataPacket[], unknown]
+          if (ah) { fileIdx = (ah as RowDataPacket).idx; fileNm = (ah as RowDataPacket).source_file_nm ?? null }
+        } catch {}
+      }
+
+      // 재신청 여부 (이전 반려 이력)
+      let isReapply = false
+      try {
+        const [[cnt]] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt FROM tb_approval_history WHERE member_idx = ?`, [idx]
+        ) as [RowDataPacket[], unknown]
+        isReapply = Number((cnt as RowDataPacket).cnt ?? 0) > 1
+      } catch {}
+      if (!isReapply && (member as RowDataPacket).admin_memo) isReapply = true
+
+      return json({
+        idx: (member as RowDataPacket).idx,
+        id: (member as RowDataPacket).id,
+        name: (member as RowDataPacket).name,
+        phone: (member as RowDataPacket).phone ?? null,
+        email: (member as RowDataPacket).email ?? null,
+        instt_code: (member as RowDataPacket).instt_code ?? null,
+        depart_code: (member as RowDataPacket).depart_code ?? null,
+        license_file_nm: fileNm ?? (member as RowDataPacket).license_file_nm ?? null,
+        file_idx: fileIdx,
+        regist_date: (member as RowDataPacket).regist_date ?? null,
+        is_reapply: isReapply,
+        admin_memo: (member as RowDataPacket).admin_memo ?? null,
+      })
+    }
+
+    // POST /api/admin/therapists/reject — 치료사 반려
+    if (path === '/api/admin/therapists/reject' && method === 'POST') {
+      if (!['sadmin', 'wadmin'].includes(user.mtype)) return err(403, 'forbidden')
+      const body = (await request.json().catch(() => ({}))) as { idx?: number; reason?: string }
+      if (!body.idx || !body.reason) return err(400, '필수 항목 누락')
+      const [[m]] = await conn.query<RowDataPacket[]>(
+        `SELECT name, phone, instt_code FROM tb_member WHERE idx = ? AND mtype = 'teacher' LIMIT 1`, [body.idx]
+      ) as [RowDataPacket[], unknown]
+      if (!m) return err(404, '치료사를 찾을 수 없습니다.')
+      await conn.query(
+        `UPDATE tb_member SET approval_status = '반려', admin_memo = ?, update_date = NOW() WHERE idx = ?`,
+        [body.reason, body.idx]
+      )
+      // 반려 SMS
+      if ((m as RowDataPacket).phone) {
+        try {
+          const [tplRows] = await conn.query<RowDataPacket[]>(
+            `SELECT template_body FROM tb_sms_template WHERE template_key = 'reject' LIMIT 1`
+          )
+          const tpl = (tplRows[0] as { template_body?: string } | undefined)?.template_body
+          if (tpl) await sendSmsAligo(env, (m as RowDataPacket).phone, tpl.replace(/\{name\}/g, (m as RowDataPacket).name ?? ''))
+        } catch {}
+      }
+      return json({ ok: true })
     }
 
     // GET /api/admin/institution-request?idx={memberIdx} — 기관 인증 요청 상세 조회

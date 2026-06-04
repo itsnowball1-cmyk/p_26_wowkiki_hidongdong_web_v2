@@ -276,20 +276,18 @@ export default function SignupFormPage({ role }: Props) {
             </>
           ) : (
             <>
-              <h2 className="text-[35px] font-bold leading-[50px] mb-6">
-                <span className="text-black">치료사 회원가입 완료</span><br />
-                <span className="text-[#005744]">하이동동 관리자 승인 후 서비스를 이용하실 수 있습니다.</span>
+              <h2 className="text-[35px] font-bold text-black mb-3 leading-[50px]">
+                치료사 회원가입 완료
               </h2>
-              <div className="w-[460px] rounded-[10px] bg-[#EAF3EA] px-8 py-6 text-[16px] text-[#141414] leading-[24px] text-center">
-                등록하신 휴대폰번호로 승인 완료 알림을 보내드릴 예정입니다.<br />
-                승인은 영업일 기준 1~2일정도 소요될 수 있습니다.
-              </div>
+              <p className="text-[15px] text-[#141414]">
+                {form.name} 님의 회원가입이 성공적으로 완료 되었습니다.
+              </p>
               <button
                 type="button"
                 onClick={() => go({ name: 'login' })}
-                className="mt-10 w-[158px] h-[58px] rounded-[10px] text-[18px] font-semibold bg-[#005744] text-white hover:opacity-90 transition"
+                className="mt-10 w-[420px] h-[58px] rounded-[10px] text-[18px] font-semibold bg-[#005744] text-white hover:opacity-90 transition"
               >
-                확인
+                로그인 바로가기
               </button>
             </>
           )}

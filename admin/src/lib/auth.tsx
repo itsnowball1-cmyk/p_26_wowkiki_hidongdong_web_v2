@@ -3,6 +3,7 @@ import { createContext, useContext, useState, type ReactNode } from 'react'
 export type AdminUser = {
   id: string
   name: string
+  idx?: number
   role: 'sadmin' | 'wadmin'
 }
 
@@ -33,9 +34,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ role: 'admin', id, password })
       })
       if (res.ok) {
-        const dto = await res.json() as { id: string; name: string; role: string }
+        const dto = await res.json() as { id: string; name: string; role: string; mtype?: string; idx?: number }
         if (dto.role !== 'admin') return { ok: false, error: '관리자 계정이 아닙니다.' }
-        const u: AdminUser = { id: dto.id, name: dto.name, role: 'wadmin' }
+        const u: AdminUser = {
+          id: dto.id,
+          name: dto.name,
+          idx: dto.idx,
+          role: dto.mtype === 'sadmin' ? 'sadmin' : 'wadmin',
+        }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
         localStorage.setItem('hbd_user_id', u.id)
         setUser(u)

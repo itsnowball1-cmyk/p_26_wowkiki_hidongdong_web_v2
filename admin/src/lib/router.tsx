@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 export type RouteName =
   | 'login' | 'dashboard' | 'institutions' | 'institution-detail' | 'institution-entities'
   | 'institution-admins' | 'institution-approval'
-  | 'children' | 'stats' | 'notices' | 'notice-write' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
+  | 'children' | 'child-detail' | 'stats' | 'notices' | 'notice-write' | 'notice-detail' | 'faq' | 'cs' | 'cs-detail'
   | 'sms-settings' | 'security' | 'security-child' | 'security-iadmin' | 'security-doctor' | 'security-therapist'
   | 'content' | 'versions' | 'data' | 'mypage'
   | 'therapists' | 'doctors'
@@ -22,6 +22,7 @@ type Route =
   | { name: 'security-doctor' }
   | { name: 'security-therapist' }
   | { name: 'children' }
+  | { name: 'child-detail'; id: number }
   | { name: 'stats' }
   | { name: 'notices' }
   | { name: 'notice-write' }
@@ -55,6 +56,7 @@ function parseHash(hash: string): Route {
   if (hash.startsWith('#/notice-write'))  return { name: 'notice-write' }
   if (hash.startsWith('#/notice-detail/')) return { name: 'notice-detail', id: hash.split('#/notice-detail/')[1] }
   if (hash.startsWith('#/cs-detail/')) return { name: 'cs-detail', id: hash.split('#/cs-detail/')[1] }
+  if (hash.startsWith('#/children/')) return { name: 'child-detail', id: Number(hash.split('#/children/')[1]) }
   if (hash.startsWith('#/children'))     return { name: 'children' }
   if (hash.startsWith('#/stats'))        return { name: 'stats' }
   if (hash.startsWith('#/notices'))      return { name: 'notices' }
@@ -86,6 +88,7 @@ function toHash(r: Route): string {
   if (r.name === 'notice-write')  return '#/notice-write'
   if (r.name === 'notice-detail') return `#/notice-detail/${r.id}`
   if (r.name === 'cs-detail') return `#/cs-detail/${r.id}`
+  if (r.name === 'child-detail') return `#/children/${r.id}`
   if (r.name === 'children')     return '#/children'
   if (r.name === 'stats')        return '#/stats'
   if (r.name === 'notices')      return '#/notices'

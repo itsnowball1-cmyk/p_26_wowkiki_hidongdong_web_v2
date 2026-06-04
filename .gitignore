@@ -6,5 +6,8 @@
 dump-*.sql
 backup/
 
+# 보안 키/인증 파일 (API 키, 비밀번호 등)
+ckey/
+
 # Claude Code 작업 디렉터리 (lock 파일이 열려 있어 git add 시 권한오류 유발)
 .claude/

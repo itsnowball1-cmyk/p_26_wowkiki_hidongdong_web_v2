@@ -38,6 +38,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [autoLogin, setAutoLogin] = useState(() => localStorage.getItem('hbd_auto_login_pref') === 'true')
 
   const tabLabel = TABS.find((t) => t.key === role)!.label
 
@@ -46,7 +47,8 @@ export default function LoginPage() {
     if (submitting) return
     setError(null)
     setSubmitting(true)
-    const result = await login(role, id, password)
+    localStorage.setItem('hbd_auto_login_pref', String(autoLogin))
+    const result = await login(role, id, password, autoLogin)
     setSubmitting(false)
     if (!result.ok) {
       setError(result.error ?? '로그인에 실패했습니다.')
@@ -134,14 +136,26 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 text-[12px] text-[#A6A6A6]">
-            <button type="button" className="hover:text-ink-700">
-              아이디찾기
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setAutoLogin(p => !p)}
+              className="flex items-center gap-2"
+            >
+              <span className={`w-[18px] h-[18px] rounded-[3px] border flex items-center justify-center transition-colors ${autoLogin ? 'bg-brand border-brand' : 'bg-white border-[#B2B2B2]'}`}>
+                {autoLogin && (
+                  <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                    <path d="M1 4.5L4 7.5L10 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </span>
+              <span className="text-[13px] text-[#666]">자동 로그인 (1주일)</span>
             </button>
-            <span className="text-[#A5A5A5]">|</span>
-            <button type="button" className="hover:text-ink-700">
-              비밀번호 찾기
-            </button>
+            <div className="flex items-center gap-3 text-[12px] text-[#A6A6A6]">
+              <button type="button" className="hover:text-ink-700">아이디찾기</button>
+              <span className="text-[#A5A5A5]">|</span>
+              <button type="button" className="hover:text-ink-700">비밀번호 찾기</button>
+            </div>
           </div>
 
           {error && (
