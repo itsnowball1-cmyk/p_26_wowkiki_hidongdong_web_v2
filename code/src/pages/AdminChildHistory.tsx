@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import AdminSidebar from '../components/AdminSidebar'
-import AdminChildTabs from '../components/AdminChildTabs'
 import TopBar from '../components/TopBar'
 import { api, type AdminChildHistory } from '../lib/api'
 import { useRouter } from '../lib/router'
@@ -168,8 +167,6 @@ export default function AdminChildHistory() {
               </form>
             </div>
           </div>
-
-          <AdminChildTabs />
 
           {/* 테이블 */}
           <div ref={tableRef} className="border border-[#DEDEDE] rounded-[5px] overflow-hidden bg-white">

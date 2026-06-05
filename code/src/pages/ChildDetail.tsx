@@ -207,9 +207,7 @@ function InfoCard({
 
         {/* Row 3: 주진단 */}
         <TableRow label="주진단">
-          {child.primary_diagnosis ? (
-            <span className="text-[#585858]">{child.primary_diagnosis}</span>
-          ) : diagInputMode ? (
+          {diagInputMode ? (
             <div className="flex items-center gap-2 w-full">
               <input
                 type="text"
@@ -233,6 +231,18 @@ function InfoCard({
               >
                 취소
               </button>
+            </div>
+          ) : child.primary_diagnosis ? (
+            <div className="flex items-center gap-4">
+              <span className="text-[#585858]">{child.primary_diagnosis}</span>
+              {isDoctor && (
+                <button
+                  onClick={() => { setDiagValue(child.primary_diagnosis!); setDiagInputMode(true) }}
+                  className="h-8 px-4 rounded-[4px] border border-[#005744] text-[#005744] text-[13px] font-medium hover:bg-[#005744] hover:text-white transition-colors"
+                >
+                  수정하기
+                </button>
+              )}
             </div>
           ) : isDoctor ? (
             <button

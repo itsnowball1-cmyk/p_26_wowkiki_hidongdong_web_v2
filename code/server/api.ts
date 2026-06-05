@@ -2380,8 +2380,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
            c.is_male_yn,
            c.doctor_code,
            c.teacher_code,
-           d.name         AS doctor_name,
-           t.name         AS therapist_name,
+           (SELECT name FROM tb_member WHERE code = c.doctor_code AND mtype = 'doctor' AND delete_yn = 'N' LIMIT 1) AS doctor_name,
+           (SELECT name FROM tb_member WHERE code = c.teacher_code AND mtype = 'teacher' AND delete_yn = 'N' LIMIT 1) AS therapist_name,
            (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
@@ -2391,10 +2391,6 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
             WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
          FROM tb_member c
-         LEFT JOIN tb_member d
-           ON d.code = c.doctor_code AND d.mtype = 'doctor' AND d.delete_yn = 'N'
-         LEFT JOIN tb_member t
-           ON t.code = c.teacher_code AND t.mtype = 'teacher' AND t.delete_yn = 'N'
          WHERE c.mtype = 'child'
            AND c.delete_yn = 'N'
            AND c.instt_code = ?

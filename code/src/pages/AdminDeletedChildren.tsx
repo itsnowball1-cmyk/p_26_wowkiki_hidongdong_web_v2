@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import AdminSidebar from '../components/AdminSidebar'
-import AdminChildTabs from '../components/AdminChildTabs'
 import TopBar from '../components/TopBar'
 import { api, type AdminChild } from '../lib/api'
 
@@ -127,8 +126,6 @@ export default function AdminDeletedChildren() {
               </button>
             </div>
           </div>
-
-          <AdminChildTabs />
 
           {/* 테이블 */}
           <div className="border border-[#DEDEDE] rounded-[5px] overflow-hidden bg-white">

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import AdminSidebar from '../components/AdminSidebar'
-import AdminChildTabs from '../components/AdminChildTabs'
 import TopBar from '../components/TopBar'
 import { api, type AdminChild } from '../lib/api'
 import { useRouter } from '../lib/router'
@@ -111,8 +110,6 @@ export default function AdminChildList() {
               </button>
             </div>
           </div>
-
-          <AdminChildTabs />
 
           {/* 테이블 */}
           <div className="border border-line rounded-[5px] overflow-hidden bg-white">

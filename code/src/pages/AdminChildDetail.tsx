@@ -8,11 +8,13 @@ import { useRouter } from '../lib/router'
 
 const DAYS = ['일', '월', '화', '수', '목', '금', '토']
 
-function Calendar({ childId }: { childId: number }) {
+function Calendar({ childId, childName }: { childId: number; childName: string }) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
   const [schedules, setSchedules] = useState<AdminChildSchedule[]>([])
+  const [showDoctor, setShowDoctor] = useState(true)
+  const [showTherapist, setShowTherapist] = useState(true)
 
   useEffect(() => {
     api.adminChildSchedules(childId, year, month)
@@ -32,8 +34,12 @@ function Calendar({ childId }: { childId: number }) {
   ]
   while (cells.length % 7 !== 0) cells.push(null)
 
+  const filtered = schedules.filter(s =>
+    (s.schedule_type === '1' && showDoctor) || (s.schedule_type !== '1' && showTherapist)
+  )
+
   const schedsByDate: Record<number, AdminChildSchedule[]> = {}
-  schedules.forEach(s => {
+  filtered.forEach(s => {
     const d = new Date(s.start_datetime)
     if (d.getFullYear() === year && d.getMonth() + 1 === month) {
       const day = d.getDate()
@@ -49,23 +55,34 @@ function Calendar({ childId }: { childId: number }) {
 
   return (
     <div>
-      {/* 캘린더 헤더 */}
-      <div className="flex items-center gap-4 mb-4">
-        <button
-          type="button"
-          onClick={prevMonth}
-          className="w-8 h-8 rounded-full bg-[#57988A] flex items-center justify-center"
-        >
+      {/* 월 네비게이션 */}
+      <div className="flex items-center justify-center gap-4 mb-4">
+        <button type="button" onClick={prevMonth} className="w-8 h-8 rounded-full bg-[#57988A] flex items-center justify-center">
           <svg width="8" height="13" viewBox="0 0 8 14" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M7 1 1 7l6 6" /></svg>
         </button>
         <span className="text-[30px] font-normal text-[#3E3E3E]">{year}년 {month}월</span>
-        <button
-          type="button"
-          onClick={nextMonth}
-          className="w-8 h-8 rounded-full bg-[#57988A] flex items-center justify-center"
-        >
+        <button type="button" onClick={nextMonth} className="w-8 h-8 rounded-full bg-[#57988A] flex items-center justify-center">
           <svg width="8" height="13" viewBox="0 0 8 14" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M1 1l6 6-6 6" /></svg>
         </button>
+      </div>
+
+      {/* 타이틀 + 필터 */}
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-[18px] font-semibold text-[#2F2E2E]">{childName} 아동 일정</span>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-1.5 cursor-pointer" onClick={() => setShowDoctor(v => !v)}>
+            <span className={`w-[18px] h-[18px] rounded-[3px] border-2 flex items-center justify-center transition-colors ${showDoctor ? 'bg-[#FFE180] border-[#FFE180]' : 'bg-white border-[#DEDEDE]'}`}>
+              {showDoctor && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="#4B4B4B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </span>
+            <span className="text-[15px] text-[#3E3E3E]">진료</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer" onClick={() => setShowTherapist(v => !v)}>
+            <span className={`w-[18px] h-[18px] rounded-[3px] border-2 flex items-center justify-center transition-colors ${showTherapist ? 'bg-[#78C773] border-[#78C773]' : 'bg-white border-[#DEDEDE]'}`}>
+              {showTherapist && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </span>
+            <span className="text-[15px] text-[#3E3E3E]">치료</span>
+          </label>
+        </div>
       </div>
 
       {/* 요일 헤더 */}
@@ -78,10 +95,7 @@ function Calendar({ childId }: { childId: number }) {
       {/* 날짜 그리드 */}
       <div className="grid grid-cols-7 border-t border-l border-[#DEDEDE]">
         {cells.map((day, idx) => (
-          <div
-            key={idx}
-            className="min-h-[140px] border-r border-b border-[#DEDEDE] p-2"
-          >
+          <div key={idx} className="min-h-[140px] border-r border-b border-[#DEDEDE] p-2">
             {day !== null && (
               <>
                 <div className="mb-1">
@@ -101,7 +115,7 @@ function Calendar({ childId }: { childId: number }) {
                           : 'bg-[#78C773] text-white'
                       }`}
                     >
-                      {fmtTime(s.start_datetime)} {s.schedule_type === '1' ? '진료' : '치료'}
+                      {fmtTime(s.start_datetime)} {s.schedule_type === '1' ? '진료' : s.schedule_type === '2' ? '언어치료' : '치료'}
                     </div>
                   ))}
                 </div>
@@ -408,10 +422,7 @@ export default function AdminChildDetail({ id, memberId }: { id: number; memberI
 
               {/* 아동 일정 캘린더 */}
               <section>
-                <div className="bg-[#EAEAEA] px-4 h-[42px] flex items-center mb-4">
-                  <h2 className="text-[25px] font-semibold text-[#2F2E2E] tracking-[-0.02em]">{child.name} 아동 일정</h2>
-                </div>
-                <Calendar childId={id} />
+                <Calendar childId={id} childName={child.name} />
               </section>
             </>
           )}
