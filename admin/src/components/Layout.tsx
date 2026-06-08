@@ -1,53 +1,69 @@
 import { type ReactNode, useState, useEffect, useCallback } from 'react'
 import { useRouter, type RouteName } from '../lib/router'
 import { useAuth } from '../lib/auth'
+import {
+  IconDashboard, IconMembers, IconChild,
+  IconMyPage, IconInquiry, IconNotice, IconFAQ, IconChat,
+  IconStats, IconSecurity, IconContent, IconVersion, IconBuilding,
+  IconPush, IconIAdmin, IconDoctor, IconTherapist,
+} from './SidebarIcons'
+import type { SVGProps } from 'react'
 
-type SubItem = { label: string; route?: RouteName; badgeKey?: string }
+type IconComp = (p: SVGProps<SVGSVGElement>) => JSX.Element
+
+type SubItem = { label: string; route?: RouteName; badgeKey?: string; icon?: IconComp }
 type MenuItem =
-  | { type: 'link';  label: string; route: RouteName }
-  | { type: 'group'; label: string; firstRoute?: RouteName; children: SubItem[] }
+  | { type: 'link';  label: string; route: RouteName; icon?: IconComp }
+  | { type: 'group'; label: string; firstRoute?: RouteName; children: SubItem[]; icon?: IconComp }
 
 const MENU: MenuItem[] = [
-  { type: 'link',  label: '대시보드', route: 'dashboard' },
+  { type: 'link',  label: '대시보드', route: 'dashboard', icon: IconDashboard },
   {
-    type: 'group', label: '회원 관리', firstRoute: 'institutions',
+    type: 'group', label: '회원 관리', firstRoute: 'institutions', icon: IconMembers,
     children: [
-      { label: '기관',        route: 'institutions',      badgeKey: 'institutions' },
-      { label: '기관 관리자', route: 'institution-admins' },
-      { label: '의사',        route: 'doctors' },
-      { label: '치료사',      route: 'therapists',        badgeKey: 'therapists' },
-      { label: '아동',        route: 'children' },
+      { label: '기관',        route: 'institutions',      badgeKey: 'institutions', icon: IconBuilding },
+      { label: '기관 관리자', route: 'institution-admins', icon: IconIAdmin },
+      { label: '의사',        route: 'doctors',            icon: IconDoctor },
+      { label: '치료사',      route: 'therapists',        badgeKey: 'therapists',   icon: IconTherapist },
+      { label: '아동',        route: 'children',           icon: IconChild },
     ],
   },
-  { type: 'link',  label: '통계/로그', route: 'stats' },
+  { type: 'link',  label: '통계/로그', route: 'stats', icon: IconStats },
   {
-    type: 'group', label: '고객센터', firstRoute: 'notices',
+    type: 'group', label: '고객센터', firstRoute: 'notices', icon: IconInquiry,
     children: [
-      { label: '공지사항',    route: 'notices' },
-      { label: 'FAQ',         route: 'faq' },
-      { label: '1:1 문의사항', route: 'cs' },
-      { label: '앱 푸시' },
-      { label: '문자 설정',   route: 'sms-settings' },
+      { label: '공지사항',    route: 'notices',       icon: IconNotice },
+      { label: 'FAQ',         route: 'faq',           icon: IconFAQ },
+      { label: '1:1 문의사항', route: 'cs',           icon: IconChat },
+      { label: '앱 푸시',                             icon: IconPush },
+      { label: '문자 설정',   route: 'sms-settings',  icon: IconInquiry },
     ],
   },
   {
-    type: 'group', label: '보안', firstRoute: 'security-iadmin',
+    type: 'group', label: '보안', firstRoute: 'security-iadmin', icon: IconSecurity,
     children: [
-      { label: '아동',       route: 'security-child' },
-      { label: '기관 관리자', route: 'security-iadmin' },
-      { label: '의사',       route: 'security-doctor' },
-      { label: '치료사',     route: 'security-therapist' },
+      { label: '아동',       route: 'security-child',     icon: IconChild },
+      { label: '기관 관리자', route: 'security-iadmin',   icon: IconIAdmin },
+      { label: '의사',       route: 'security-doctor',    icon: IconDoctor },
+      { label: '치료사',     route: 'security-therapist', icon: IconTherapist },
     ],
   },
-  { type: 'link',  label: '콘텐츠',   route: 'content' },
-  { type: 'link',  label: '버전관리', route: 'versions' },
-  { type: 'link',  label: '마이페이지', route: 'mypage' },
+  { type: 'link',  label: '콘텐츠',   route: 'content',  icon: IconContent },
+  { type: 'link',  label: '버전관리', route: 'versions',  icon: IconVersion },
+  { type: 'link',  label: '마이페이지', route: 'mypage',  icon: IconMyPage },
 ]
+
 
 type BadgeCounts = { institutions: number; therapists: number }
 
 function groupContains(group: Extract<MenuItem, { type: 'group' }>, routeName: string) {
   return group.children.some(c => c.route === routeName)
+}
+
+function SidebarIcon({ icon: Icon, active }: { icon?: IconComp; active: boolean }) {
+  const cls = `flex-shrink-0 w-5 h-5 ${active ? 'text-[#005744]' : 'text-[#B5B5B5]'}`
+  if (!Icon) return <span className={`w-[20px] h-[20px] rounded-[3px] ${active ? 'bg-[#005744]' : 'bg-[#B5B5B5]'} flex-shrink-0`} />
+  return <Icon className={cls} />
 }
 
 export default function Layout({ children, title }: { children: ReactNode; title?: string }) {
@@ -74,7 +90,6 @@ export default function Layout({ children, title }: { children: ReactNode; title
     return () => clearInterval(timer)
   }, [fetchBadges])
 
-  // 열린 그룹 상태 — 현재 라우트가 속한 그룹은 초기에 열려 있음
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
     const initial = new Set<string>()
     MENU.forEach(item => {
@@ -85,7 +100,6 @@ export default function Layout({ children, title }: { children: ReactNode; title
     return initial
   })
 
-  // 라우트 바뀌면 해당 그룹 자동 열기
   useEffect(() => {
     MENU.forEach(item => {
       if (item.type === 'group' && groupContains(item, activeRoute)) {
@@ -128,7 +142,7 @@ export default function Layout({ children, title }: { children: ReactNode; title
                     active ? 'bg-[#F3F3F3] text-[#000000]' : 'text-[#B5B5B5] hover:bg-[#F9F9F9] hover:text-[#555]'
                   }`}
                 >
-                  <span className={`w-[20px] h-[20px] rounded-[3px] flex-shrink-0 ${active ? 'bg-[#B4B4B4]' : 'bg-[#B5B5B5]'}`} />
+                  <SidebarIcon icon={item.icon} active={active} />
                   <span className="flex-1 text-left">{item.label}</span>
                 </button>
               )
@@ -144,7 +158,7 @@ export default function Layout({ children, title }: { children: ReactNode; title
                 <div className={`w-full h-[48px] flex items-center gap-[14px] pl-[18px] pr-3 text-[15px] font-medium transition-colors ${
                   childActive ? 'text-[#000000]' : 'text-[#B5B5B5]'
                 }`}>
-                  <span className={`w-[20px] h-[20px] rounded-[3px] flex-shrink-0 ${childActive ? 'bg-[#B4B4B4]' : 'bg-[#B5B5B5]'}`} />
+                  <SidebarIcon icon={item.icon} active={childActive} />
                   {/* 그룹명 클릭 → 첫 자식으로 이동 */}
                   <button
                     type="button"
@@ -182,7 +196,7 @@ export default function Layout({ children, title }: { children: ReactNode; title
                           onClick={() => child.route && navTo(child.route)}
                           className="w-full h-[38px] flex items-center gap-[14px] pl-[26px] bg-[#F1F1F1] rounded-[5px]"
                         >
-                          <span className="w-[20px] h-[20px] rounded-[3px] bg-[#005744] flex-shrink-0" />
+                          <SidebarIcon icon={child.icon} active={true} />
                           <span className="flex-1 text-left text-[15px] font-medium text-[#343A40]">{child.label}</span>
                           {badgeCount > 0 && (
                             <span className="mr-2 min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF4646] text-white text-[11px] font-bold flex items-center justify-center">
@@ -202,7 +216,7 @@ export default function Layout({ children, title }: { children: ReactNode; title
                         clickable ? 'hover:bg-[#F9F9F9] hover:text-[#555]' : 'cursor-default'
                       }`}
                     >
-                      <span className="w-[20px] h-[20px] rounded-[3px] bg-[#B5B5B5] flex-shrink-0" />
+                      <SidebarIcon icon={child.icon} active={false} />
                       <span className="flex-1 text-left">{child.label}</span>
                       {badgeCount > 0 && (
                         <span className="mr-3 min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF4646] text-white text-[11px] font-bold flex items-center justify-center">

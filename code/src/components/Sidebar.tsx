@@ -1,15 +1,22 @@
+import type { SVGProps } from 'react'
 import { useState } from 'react'
 import BrandLogo from './BrandLogo'
 import { useRouter } from '../lib/router'
+import {
+  IconDashboard, IconChild, IconCalendar, IconCustom, IconMyPage,
+  IconInquiry, IconNotice, IconChat,
+} from './SidebarIcons'
 
+type P = SVGProps<SVGSVGElement>
+type IconComp = (p: P) => JSX.Element
 type MenuKey = 'dashboard' | 'children' | 'schedule' | 'custom' | 'mypage'
 
-const items: { key: MenuKey; label: string }[] = [
-  { key: 'dashboard', label: '대시보드' },
-  { key: 'children', label: '아동관리' },
-  { key: 'schedule', label: '전체 내진 일정' },
-  { key: 'custom', label: '아동별 커스텀' },
-  { key: 'mypage', label: '마이페이지' },
+const items: { key: MenuKey; label: string; icon: IconComp }[] = [
+  { key: 'dashboard', label: '대시보드',      icon: IconDashboard },
+  { key: 'children',  label: '아동관리',       icon: IconChild     },
+  { key: 'schedule',  label: '전체 내진 일정', icon: IconCalendar  },
+  { key: 'custom',    label: '아동별 커스텀',  icon: IconCustom    },
+  { key: 'mypage',    label: '마이페이지',     icon: IconMyPage    },
 ]
 
 export default function Sidebar() {
@@ -52,6 +59,7 @@ export default function Sidebar() {
         <ul className="space-y-1">
           {items.map((item) => {
             const isActive = item.key === active
+            const Icon = item.icon
             return (
               <li key={item.key}>
                 <button
@@ -63,11 +71,10 @@ export default function Sidebar() {
                       : 'text-ink-300 hover:text-ink-700 hover:bg-surface-active/60'
                   }`}
                 >
-                  <span
-                    className={`inline-block w-5 h-5 rounded-[3px] ${
-                      isActive ? 'bg-brand' : 'bg-[#B4B4B4] group-hover:bg-brand'
+                  <Icon
+                    className={`w-5 h-5 flex-shrink-0 transition-colors ${
+                      isActive ? 'text-brand' : 'text-ink-300 group-hover:text-brand'
                     }`}
-                    aria-hidden
                   />
                   <span className="text-[15px] font-medium">{item.label}</span>
                 </button>
@@ -80,9 +87,17 @@ export default function Sidebar() {
             <button
               type="button"
               onClick={() => setInquiryManualOpen(o => !o)}
-              className="group w-full h-[44px] flex items-center px-[13px] gap-3 rounded-[5px] text-left transition-colors text-ink-300 hover:text-ink-700 hover:bg-surface-active/60"
+              className={`group w-full h-[44px] flex items-center px-[13px] gap-3 rounded-[5px] text-left transition-colors ${
+                inquiryOpen && !inquiryManualOpen
+                  ? 'text-ink-850'
+                  : 'text-ink-300 hover:text-ink-700 hover:bg-surface-active/60'
+              }`}
             >
-              <span className="inline-block w-5 h-5 rounded-[3px] bg-[#B4B4B4] group-hover:bg-brand" aria-hidden />
+              <IconInquiry
+                className={`w-5 h-5 flex-shrink-0 transition-colors ${
+                  inquiryOpen ? 'text-brand' : 'text-ink-300 group-hover:text-brand'
+                }`}
+              />
               <span className="text-[15px] font-medium flex-1">문의하기</span>
               <svg
                 width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2"
@@ -104,7 +119,7 @@ export default function Sidebar() {
                         : 'text-ink-500 hover:text-ink-700 hover:bg-surface-active/60'
                     }`}
                   >
-                    <span className={`inline-block w-5 h-5 rounded-[3px] ${isOnNotice ? 'bg-brand' : 'bg-[#B4B4B4]'}`} aria-hidden />
+                    <IconNotice className={`w-5 h-5 flex-shrink-0 ${isOnNotice ? 'text-brand' : 'text-ink-300'}`} />
                     <span className="text-[15px] font-medium">공지사항</span>
                   </button>
                 </li>
@@ -118,7 +133,7 @@ export default function Sidebar() {
                         : 'text-ink-500 hover:text-ink-700 hover:bg-surface-active/60'
                     }`}
                   >
-                    <span className={`inline-block w-5 h-5 rounded-[3px] ${isOnFaq ? 'bg-brand' : 'bg-[#B4B4B4]'}`} aria-hidden />
+                    <IconInquiry className={`w-5 h-5 flex-shrink-0 ${isOnFaq ? 'text-brand' : 'text-ink-300'}`} />
                     <span className="text-[15px] font-medium">FAQ</span>
                   </button>
                 </li>
@@ -132,7 +147,7 @@ export default function Sidebar() {
                         : 'text-ink-500 hover:text-ink-700 hover:bg-surface-active/60'
                     }`}
                   >
-                    <span className={`inline-block w-5 h-5 rounded-[3px] ${isOnSupport ? 'bg-brand' : 'bg-[#B4B4B4]'}`} aria-hidden />
+                    <IconChat className={`w-5 h-5 flex-shrink-0 ${isOnSupport ? 'text-brand' : 'text-ink-300'}`} />
                     <span className="text-[15px] font-medium">1:1 문의하기</span>
                   </button>
                 </li>
