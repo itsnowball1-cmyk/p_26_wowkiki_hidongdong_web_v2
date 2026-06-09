@@ -13,7 +13,6 @@ type FormState = {
   name: string
   phone: string
   phoneCode: string
-  email: string
   institutionCode: string
   department: string
 }
@@ -25,7 +24,6 @@ const INITIAL: FormState = {
   name: '',
   phone: '',
   phoneCode: '',
-  email: '',
   institutionCode: '',
   department: ''
 }
@@ -202,7 +200,6 @@ export default function SignupFormPage({ role }: Props) {
           pw: form.password,
           name: form.name.trim(),
           phone: form.phone.trim(),
-          email: form.email.trim(),
           instt_code: form.institutionCode.trim().toUpperCase(),
           depart_code: form.department.trim(),
           license_file_nm,
@@ -444,20 +441,6 @@ export default function SignupFormPage({ role }: Props) {
               {phoneError && (
                 <div className="text-[12px] text-brand-danger">{phoneError}</div>
               )}
-            </div>
-          </FormRow>
-
-          <FormRow label="이메일">
-            <div className="space-y-1.5">
-              <Input
-                type="email"
-                value={form.email}
-                onChange={update('email')}
-                placeholder="이메일을 입력해주세요."
-              />
-              <div className="text-[12px] text-brand-danger">
-                답변 알림이 이메일로 발송됩니다. 정확히 입력해 주세요.
-              </div>
             </div>
           </FormRow>
 

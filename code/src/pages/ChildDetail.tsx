@@ -43,12 +43,25 @@ export default function ChildDetail({ id }: Props) {
   const [detail, setDetail] = useState<ChildDetailDto>(FALLBACK_DETAIL)
   const [diagnoses, setDiagnoses] = useState<DiagnosisListItem[]>(FALLBACK_DIAGNOSES)
   const [treatments, setTreatments] = useState<TreatmentListItem[]>(FALLBACK_TREATMENTS)
+  const [showRediagModal, setShowRediagModal] = useState(false)
+  const [rediagDate, setRediagDate] = useState<string | null>(null)
 
   const loadDetail = () => api.childDetail(id).then(setDetail).catch(() => {})
 
   useEffect(() => {
     loadDetail()
-    api.childDiagnoses(id).then(setDiagnoses).catch(() => {})
+    api.childDiagnoses(id).then(rows => {
+      setDiagnoses(rows)
+      if (rows.length > 0) {
+        const datePart = rows[0].examined_at.slice(0, 10).replace(/\./g, '-')
+        const diagMs = new Date(datePart).getTime()
+        const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime()
+        if (!isNaN(diagMs) && todayMs - diagMs >= 14 * 86400000) {
+          setRediagDate(rows[0].examined_at.slice(0, 10))
+          setShowRediagModal(true)
+        }
+      }
+    }).catch(() => {})
     api.childTreatments(id).then(setTreatments).catch(() => {})
   }, [id])
 
@@ -118,6 +131,41 @@ export default function ChildDetail({ id }: Props) {
           <div className="text-[12px] text-ink-400 pt-4">아동 ID: {id}</div>
         </main>
       </div>
+
+      {showRediagModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="relative w-[400px] bg-white rounded-[10px] shadow-lg py-10 px-8 flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => setShowRediagModal(false)}
+              className="absolute top-[21px] right-[21px] w-[15px] h-[15px] flex items-center justify-center text-[#707070] hover:text-ink-700"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                <path d="M2 2L13 13M13 2L2 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </button>
+
+            <h2 className="text-[20px] font-bold text-ink-800 mb-[18px]">재진단 안내</h2>
+
+            <p className="text-[12px] font-medium text-ink-800 text-center leading-[18px] mb-3">
+              진단 후 2주가 경과했습니다.<br />
+              아이의 발음 변화를 확인하기 위해 재진단을 진행해주세요.
+            </p>
+
+            <p className="text-[12px] font-medium text-brand text-center leading-[18px] mb-7">
+              최근 진단 일시: {rediagDate}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setShowRediagModal(false)}
+              className="w-[125px] h-[40px] rounded-[5px] border border-brand text-brand text-[15px] font-medium hover:bg-brand/5 transition-colors"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

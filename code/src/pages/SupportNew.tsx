@@ -19,7 +19,6 @@ const INQUIRY_TYPES = [
 export default function SupportNew() {
   const { go } = useRouter()
   const { user } = useAuth()
-  const [email, setEmail] = useState('')
   const [sType, setSType] = useState('01')
   const [title, setTitle] = useState('')
   const [memo, setMemo] = useState('')
@@ -57,7 +56,7 @@ export default function SupportNew() {
     setSubmitting(true)
     try {
       const fileMeta = files.map(f => ({ name: f.name, size: f.size }))
-      await api.supportCreate({ email, s_type: sType, s_title: title, memo, files: fileMeta })
+      await api.supportCreate({ s_type: sType, s_title: title, memo, files: fileMeta })
       go({ name: 'support-list' })
     } catch (e) {
       setError(e instanceof Error ? e.message : '오류가 발생했습니다.')
@@ -79,18 +78,6 @@ export default function SupportNew() {
             </FormRow>
             <FormRow label="이름">
               <span className="text-ink-500">{user?.name}</span>
-            </FormRow>
-            <FormRow label="이메일">
-              <div>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="이메일을 입력하세요."
-                  className="w-full h-10 px-3 border border-line rounded-[5px] text-[14px] focus:outline-none focus:border-brand"
-                />
-                <p className="mt-1 text-[12px] text-ink-400">답변 알림이 이메일로 발송됩니다. 정확히 입력해 주세요.</p>
-              </div>
             </FormRow>
             <FormRow label="문의유형">
               <select

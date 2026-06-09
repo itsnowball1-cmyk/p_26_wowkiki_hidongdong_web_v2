@@ -30,6 +30,7 @@ type Route =
   | { name: 'admin-member-deleted' }
   | { name: 'admin-members' }
   | { name: 'login' }
+  | { name: 'find-id' }
   | { name: 'signup' }
   | { name: 'signup-terms'; role: SignupRole }
   | { name: 'signup-form'; role: SignupRole }
@@ -76,6 +77,7 @@ function parseHash(hash: string): Route {
   if (adminChildDetail) return { name: 'admin-child-detail', id: Number(adminChildDetail[1]) }
   if (hash.startsWith('#/admin')) return { name: 'admin-children' }
   if (hash.startsWith('#/login')) return { name: 'login' }
+  if (hash.startsWith('#/find-id')) return { name: 'find-id' }
   if (hash.startsWith('#/signup/rejected')) return { name: 'signup-rejected' }
   if (hash.startsWith('#/signup/supplement')) return { name: 'signup-supplement' }
   if (hash.startsWith('#/iadmin/supplement')) return { name: 'iadmin-supplement' }
@@ -119,6 +121,7 @@ function toHash(route: Route): string {
   if (route.name === 'admin-dashboard') return '#/admin/dashboard'
   if (route.name === 'admin-children') return '#/admin'
   if (route.name === 'login') return '#/login'
+  if (route.name === 'find-id') return '#/find-id'
   if (route.name === 'signup-rejected') return '#/signup/rejected'
   if (route.name === 'signup-supplement') return '#/signup/supplement'
   if (route.name === 'iadmin-supplement') return '#/iadmin/supplement'

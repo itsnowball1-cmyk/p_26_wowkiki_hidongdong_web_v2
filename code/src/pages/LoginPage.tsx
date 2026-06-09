@@ -152,7 +152,7 @@ export default function LoginPage() {
               <span className="text-[13px] text-[#666]">자동 로그인 (1주일)</span>
             </button>
             <div className="flex items-center gap-3 text-[12px] text-[#A6A6A6]">
-              <button type="button" className="hover:text-ink-700">아이디찾기</button>
+              <button type="button" onClick={() => go({ name: 'find-id' })} className="hover:text-ink-700">아이디찾기</button>
               <span className="text-[#A5A5A5]">|</span>
               <button type="button" className="hover:text-ink-700">비밀번호 찾기</button>
             </div>

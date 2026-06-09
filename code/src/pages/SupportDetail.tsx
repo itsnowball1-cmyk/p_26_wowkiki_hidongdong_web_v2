@@ -76,7 +76,6 @@ export default function SupportDetail({ id }: { id: number }) {
                   <td className="py-3 px-4 bg-surface font-medium text-ink-700 w-28 whitespace-nowrap border-l border-line">문의유형</td>
                   <td className="py-3 px-4 text-ink-700">{INQUIRY_TYPE_LABEL[support.s_type] ?? support.s_type}</td>
                 </tr>
-                <DetailRow label="이메일">{support.email || '-'}</DetailRow>
                 <DetailRow label="문의날짜">{support.regist_date}</DetailRow>
                 <DetailRow label="제목">{support.s_title}</DetailRow>
                 <DetailRow label="내용">

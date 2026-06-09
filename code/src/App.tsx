@@ -26,6 +26,7 @@ import AdminMemberList from './pages/AdminMemberList'
 import AdminMemberDetail from './pages/AdminMemberDetail'
 import AdminMemberDeletedList from './pages/AdminMemberDeletedList'
 import LoginPage from './pages/LoginPage'
+import FindIdPage from './pages/FindIdPage'
 import SignupPage from './pages/SignupPage'
 import SignupTermsPage from './pages/SignupTermsPage'
 import SignupFormPage from './pages/SignupFormPage'
@@ -45,6 +46,7 @@ function Routes() {
 
   const isAuthRoute =
     route.name === 'login' ||
+    route.name === 'find-id' ||
     route.name === 'signup' ||
     route.name === 'signup-terms' ||
     route.name === 'signup-form' ||
@@ -63,6 +65,7 @@ function Routes() {
 
   // 미인증
   if (!user) {
+    if (route.name === 'find-id') return <FindIdPage />
     if (route.name === 'signup') return <SignupPage />
     if (route.name === 'signup-terms') return <SignupTermsPage role={route.role} />
     if (route.name === 'signup-form') {

@@ -792,6 +792,57 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json({ ok: true })
     }
 
+    // POST /api/auth/find-id/check
+    if (path === '/api/auth/find-id/check' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { role?: string; name?: string; phone?: string }
+      const name  = (body.name ?? '').trim()
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      const role  = (body.role ?? '') as Role
+      if (!name || !phone || phone.length < 10) return err(400, '이름과 전화번호를 입력해주세요.')
+      if (!['admin', 'doctor', 'therapist'].includes(role)) return err(400, '역할을 선택해주세요.')
+      const mtypes = roleToMtypes(role)
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT id FROM tb_member WHERE name = ? AND phone = ? AND mtype IN (${ph(mtypes.length)}) AND delete_yn = 'N' LIMIT 1`,
+        [name, phone, ...mtypes]
+      )
+      if (!(rows as RowDataPacket[])[0]) return err(400, '입력하신 정보와 일치하는 계정을 찾을 수 없습니다.')
+      const code = String(Math.floor(100000 + Math.random() * 900000))
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ')
+      await conn.query(`DELETE FROM tb_sms_verification WHERE phone = ?`, [phone])
+      await conn.query(`INSERT INTO tb_sms_verification (phone, code, expires_at) VALUES (?, ?, ?)`, [phone, code, expiresAt])
+      await sendSmsAligo(env, phone, `[하이동동] 아이디 찾기 인증번호 [${code}]를 입력해주세요. (5분 이내 유효)`)
+      return json({ ok: true })
+    }
+
+    // POST /api/auth/find-id/verify
+    if (path === '/api/auth/find-id/verify' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { role?: string; name?: string; phone?: string; code?: string }
+      const name  = (body.name ?? '').trim()
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      const role  = (body.role ?? '') as Role
+      const code  = (body.code ?? '').trim()
+      if (!name || !phone || !code) return err(400, '모든 항목을 입력해주세요.')
+      const [codeRows] = await conn.query<RowDataPacket[]>(
+        `SELECT id, code, expires_at, verified FROM tb_sms_verification WHERE phone = ? ORDER BY id DESC LIMIT 1`,
+        [phone]
+      )
+      const codeRow = (codeRows as RowDataPacket[])[0] as { id: number; code: string; expires_at: Date; verified: number } | undefined
+      if (!codeRow) return err(400, '인증번호를 먼저 요청해주세요.')
+      if (codeRow.verified) return err(400, '이미 사용된 인증번호입니다.')
+      if (new Date(codeRow.expires_at) < new Date()) return err(400, '인증번호가 만료되었습니다. 다시 요청해주세요.')
+      if (codeRow.code !== code) return err(400, '인증번호가 일치하지 않습니다.')
+      const mtypes = roleToMtypes(role)
+      const [memberRows] = await conn.query<RowDataPacket[]>(
+        `SELECT id FROM tb_member WHERE name = ? AND phone = ? AND mtype IN (${ph(mtypes.length)}) AND delete_yn = 'N' LIMIT 1`,
+        [name, phone, ...mtypes]
+      )
+      if (!(memberRows as RowDataPacket[])[0]) return err(400, '일치하는 계정을 찾을 수 없습니다.')
+      await conn.query(`UPDATE tb_sms_verification SET verified = 1 WHERE id = ?`, [codeRow.id])
+      const memberId = ((memberRows as RowDataPacket[])[0] as { id: string }).id
+      const maskedId = memberId.slice(0, 3) + '***'
+      return json({ ok: true, maskedId })
+    }
+
     // POST /api/auth/send-sms
     if (path === '/api/auth/send-sms' && method === 'POST') {
       const body = (await request.json().catch(() => ({}))) as { phone?: string }
@@ -2687,14 +2738,22 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            (SELECT DATEDIFF(CURDATE(), DATE(r.act_date))
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.use_type = 'training'
-            ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS days_since_trained
+            ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS days_since_trained,
+           (SELECT DATE(r.act_date)
+            FROM tb_childact_report r
+            WHERE r.id = c.id AND r.use_type = 'diagnostic'
+            ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diagnosis_date,
+           (SELECT r.analysislog
+            FROM tb_childact_report r
+            WHERE r.id = c.id AND r.use_type = 'diagnostic'
+            ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diag_log
          FROM tb_member c
          WHERE c.mtype = 'child' AND c.delete_yn = 'N' AND c.instt_code = ?
            ${codeWhere}
          ORDER BY c.idx`,
         [user.instt_code, ...codeArgs]
       )
-      type DRow = RowDataPacket & { id: number; identifier: string; name: string; birth_date: unknown; regist_date: unknown; today_log: string|null; latest_log: string|null; days_since_trained: number|null }
+      type DRow = RowDataPacket & { id: number; identifier: string; name: string; birth_date: unknown; regist_date: unknown; today_log: string|null; latest_log: string|null; days_since_trained: number|null; last_diagnosis_date: unknown; last_diag_log: string|null }
 
       const thisMonth = new Date(); const lastMonth = new Date()
       lastMonth.setMonth(lastMonth.getMonth() - 1)
@@ -2713,7 +2772,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const children = (childRows as DRow[]).map(r => {
         const todayP  = parseAnalysislog(r.today_log)
         const latestP = parseAnalysislog(r.latest_log)
+        const diagP   = parseAnalysislog(r.last_diag_log)
         const todayAcc = todayP.accuracy_pct
+        const latestAcc = latestP.accuracy_pct
+        const diagAcc   = diagP.accuracy_pct
         const hasTrainedToday = r.today_log != null
 
         if (hasTrainedToday) trainedToday++
@@ -2726,15 +2788,19 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           if (rd.getFullYear() === lastMonth.getFullYear() && rd.getMonth() === lastMonth.getMonth()) newLastMonth++
         }
 
+        const needs_custom_change = latestAcc != null && diagAcc !== null && latestAcc >= diagAcc + 5
+
         return {
-          id:                r.id,
-          identifier:        r.identifier,
-          name:              r.name,
-          birth_date:        fmtDate(r.birth_date),
-          age_label:         ageLabel(r.birth_date),
-          today_accuracy:    todayAcc,
-          current_sound:     latestP.trained_sound ?? null,
-          days_since_trained: r.days_since_trained ?? null,
+          id:                  r.id,
+          identifier:          r.identifier,
+          name:                r.name,
+          birth_date:          fmtDate(r.birth_date),
+          age_label:           ageLabel(r.birth_date),
+          diagnosis_date:      fmtDate(r.last_diagnosis_date),
+          today_accuracy:      todayAcc,
+          current_sound:       latestP.trained_sound ?? null,
+          days_since_trained:  r.days_since_trained ?? null,
+          needs_custom_change,
         }
       })
 

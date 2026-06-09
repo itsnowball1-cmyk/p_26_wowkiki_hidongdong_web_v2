@@ -6,7 +6,7 @@ import { useRouter } from '../lib/router'
 
 type Child = DashboardDto['children'][number]
 
-function DeltaBadge({ delta, label }: { delta: number; label: string }) {
+function DeltaBadge({ delta }: { delta: number; label: string }) {
   if (delta > 0) return (
     <span className="inline-flex items-center justify-center px-2 h-[22px] rounded-[4px] text-[13px] font-semibold bg-[#FFE2E2] text-[#FF5151]">
       + {delta}
@@ -69,16 +69,43 @@ function ProgressBar({ pct }: { pct: number }) {
   )
 }
 
-function CustomStatus({ child }: { child: Child }) {
-  if (!child.current_sound) {
-    return <span className="text-[#F7941D] font-medium text-[13px]">커스텀 미등록</span>
-  }
-  const days = child.days_since_trained
+function StatusBadge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="text-[#484848] text-[13px]">
-      {child.current_sound}
-      {days != null ? ` (${days}일 경과)` : ''}
+    <span className="inline-flex items-center justify-center px-[5px] h-5 rounded-[5px] border border-[#FF5151] text-[#FF5151] text-[13px] font-medium whitespace-nowrap">
+      {children}
     </span>
+  )
+}
+
+function daysSince(dateStr: string | null): number | null {
+  if (!dateStr) return null
+  const [y, m, d] = dateStr.split('.').map(Number)
+  if (!y || !m) return null
+  const diagMs = new Date(y, m - 1, d || 1).getTime()
+  const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime()
+  return Math.floor((todayMs - diagMs) / 86400000)
+}
+
+function DiagnosisCell({ child }: { child: Child }) {
+  const needsRediag = (daysSince(child.diagnosis_date) ?? 0) >= 14
+  return (
+    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+      <span className="text-[#484848]">{child.diagnosis_date ?? '-'}</span>
+      {needsRediag && <StatusBadge>재진단 필요</StatusBadge>}
+    </div>
+  )
+}
+
+function CustomStatus({ child }: { child: Child }) {
+  const days = child.days_since_trained
+  const text = child.current_sound
+    ? `${child.current_sound}${days != null ? ` (${days}일 경과)` : ''}`
+    : null
+  return (
+    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+      <span className="text-[#484848] text-[13px]">{text ?? '-'}</span>
+      {child.needs_custom_change && <StatusBadge>커스텀 변경 필요</StatusBadge>}
+    </div>
   )
 }
 
@@ -173,6 +200,7 @@ export default function Dashboard() {
                     <th className="h-[44px] text-center font-medium text-[#202020]">이름(나이)</th>
                     <th className="h-[44px] text-center font-medium text-[#202020]">식별코드</th>
                     <th className="h-[44px] text-center font-medium text-[#202020]">생년월일</th>
+                    <th className="h-[44px] text-center font-medium text-[#202020]">진단일시</th>
                     <th className="h-[44px] text-center font-medium text-[#202020]">오늘 훈련 진행률</th>
                     <th className="h-[44px] text-center font-medium text-[#202020]">커스텀 상태</th>
                     <th className="h-[44px] text-center font-medium text-[#202020]">비고</th>
@@ -181,14 +209,14 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-[#DEDEDE]">
                   {loading && [0,1,2,3,4].map(i => (
                     <tr key={i}>
-                      <td colSpan={7} className="py-3 px-4">
+                      <td colSpan={8} className="py-3 px-4">
                         <div className="h-4 rounded animate-pulse bg-[#EAEAEA]" />
                       </td>
                     </tr>
                   ))}
                   {!loading && children.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-16 text-center text-[#919191]">
+                      <td colSpan={8} className="py-16 text-center text-[#919191]">
                         배정된 아동이 없습니다.
                       </td>
                     </tr>
@@ -205,6 +233,7 @@ export default function Dashboard() {
                       </td>
                       <td className="text-center text-[#484848]">{c.identifier}</td>
                       <td className="text-center text-[#484848]">{c.birth_date ?? '-'}</td>
+                      <td className="text-center"><DiagnosisCell child={c} /></td>
                       <td className="text-center">
                         <ProgressBar pct={c.today_accuracy ?? 0} />
                       </td>

@@ -32,7 +32,6 @@ export default function MyPage() {
   // 임시 사용자 데이터 — 실제로는 API/auth에서 가져옴
   const [name, setName] = useState(user?.name ?? '김아무개')
   const [phone, setPhone] = useState('010-1234-5678')
-  const [email, setEmail] = useState('rlaclfy@dkssud.com')
   const [department, setDepartment] = useState(user?.department ?? '재활의학과')
   const [institutionName] = useState('OOOO병원')
   const [workingDays, setWorkingDays] = useState<Set<Day>>(new Set(['월', '수']))
@@ -115,13 +114,6 @@ export default function MyPage() {
             </Cell>
 
             {/* Row 3 */}
-            <Cell label="이메일">
-              {editingProfile ? (
-                <InlineInput value={email} onChange={setEmail} type="email" />
-              ) : (
-                <span>{email}</span>
-              )}
-            </Cell>
             <Cell label="내 식별 코드 확인">
               <div className="flex items-center justify-between gap-3 w-full">
                 <span className="text-ink-900">{user.id}</span>

@@ -24,7 +24,6 @@ type FormState = {
   id: string
   password: string
   passwordConfirm: string
-  email: string
   address: string
   addressDetail: string
   directorName: string
@@ -36,7 +35,7 @@ type FormState = {
 const INITIAL: FormState = {
   institutionType: '', institutionName: '', businessRegNumber: '',
   name: '', phone: '', phoneCode: '', id: '', password: '', passwordConfirm: '',
-  email: '', address: '', addressDetail: '', directorName: '', otherRequests: '',
+  address: '', addressDetail: '', directorName: '', otherRequests: '',
   doctorSheets: '', therapistSheets: '',
 }
 
@@ -66,7 +65,6 @@ export default function AdminSignupFormPage() {
   const certInputRef = useRef<HTMLInputElement>(null)
   const [showDupWarning, setShowDupWarning] = useState(false)
   const [submitted, setSubmitted] = useState(false)
-  const [generatedCode, setGeneratedCode] = useState('')
   const [submitError, setSubmitError] = useState('')
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
@@ -95,7 +93,6 @@ export default function AdminSignupFormPage() {
     idStatus === 'available' &&
     pwValidation.valid &&
     passwordMatch &&
-    form.email.trim() &&
     form.address.trim() &&
     form.directorName.trim() &&
     form.doctorSheets &&
@@ -201,7 +198,6 @@ export default function AdminSignupFormPage() {
           phone: form.phone.trim(),
           id: form.id.trim(),
           pw: form.password,
-          email: form.email.trim(),
           address: form.address.trim(),
           addressDetail: form.addressDetail.trim() || null,
           directorName: form.directorName.trim(),
@@ -212,7 +208,6 @@ export default function AdminSignupFormPage() {
       })
       const data = await res.json() as { ok?: boolean; instt_code?: string; error?: string }
       if (!res.ok) { setSubmitError(data.error ?? '회원가입에 실패했습니다.'); return }
-      setGeneratedCode(data.instt_code ?? '')
       setSubmitted(true)
     } catch { setSubmitError('서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.') }
   }
@@ -438,9 +433,6 @@ export default function AdminSignupFormPage() {
             </div>
           </FormRow>
 
-          <FormRow label="이메일" last>
-            <TextInput type="email" value={form.email} onChange={update('email')} placeholder="이메일을 입력해주세요." />
-          </FormRow>
         </FormTable>
 
         {/* ── 병원 정보 입력 ────────────────────────── */}

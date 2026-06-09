@@ -361,9 +361,11 @@ export type DashboardDto = {
     name: string
     birth_date: string | null
     age_label: string | null
+    diagnosis_date: string | null
     today_accuracy: number | null
     current_sound: string | null
     days_since_trained: number | null
+    needs_custom_change: boolean
   }[]
 }
 
@@ -399,7 +401,6 @@ export type SupportDetailDto = {
   s_title: string
   memo: string
   s_type: string
-  email: string
   name: string
   regist_date: string
   reply_yn: string
@@ -516,9 +517,19 @@ export const api = {
     apiFetch<AdminDashboardDto>('/admin/dashboard'),
   adminChildHistory: (status: 'active' | 'dormant' | 'all', search: string) =>
     apiFetch<AdminChildHistory[]>(`/admin/child-history?status=${status}&search=${encodeURIComponent(search)}`),
+  findIdCheck: (role: Role, name: string, phone: string) =>
+    apiFetch<{ ok: true }>('/auth/find-id/check', {
+      method: 'POST',
+      body: JSON.stringify({ role, name, phone })
+    }),
+  findIdVerify: (role: Role, name: string, phone: string, code: string) =>
+    apiFetch<{ ok: true; maskedId: string }>('/auth/find-id/verify', {
+      method: 'POST',
+      body: JSON.stringify({ role, name, phone, code })
+    }),
   supportList: (from: string, to: string) =>
     apiFetch<{ items: SupportListItem[] }>(`/support?from=${from}&to=${to}`),
-  supportCreate: (body: { email: string; s_type: string; s_title: string; memo: string; files?: { name: string; size: number }[] }) =>
+  supportCreate: (body: { s_type: string; s_title: string; memo: string; files?: { name: string; size: number }[] }) =>
     apiFetch<{ id: number }>('/support', { method: 'POST', body: JSON.stringify(body) }),
   supportDetail: (id: number) => apiFetch<SupportDetailDto>(`/support/${id}`),
   supportCancel: (id: number) => apiFetch<{ ok: boolean }>(`/support/${id}`, { method: 'DELETE' }),
