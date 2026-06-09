@@ -1,0 +1,21 @@
+# NAS 정적 파일 서버 (`api.wowkiki.kr` 대체용)
+# /volume1/docker/files_wowkiki/ 에서 실행.
+# dataCenter/ 디렉터리는 같은 폴더에 위치하며 AWS 에서 rsync 로 채워둠.
+
+services:
+  files:
+    image: nginx:alpine
+    container_name: hidongdong-files
+    restart: unless-stopped
+    ports:
+      - "3013:80"
+    volumes:
+      - ./dataCenter:/usr/share/nginx/html/dataCenter:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - wowkiki-net   # hidongdong-api 컨테이너에 /api/ 프록시하기 위한 공유 네트워크
+
+networks:
+  # 사전 생성 필요(1회): docker network create wowkiki-net
+  wowkiki-net:
+    external: true

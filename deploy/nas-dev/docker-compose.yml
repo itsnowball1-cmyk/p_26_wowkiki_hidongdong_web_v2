@@ -1,17 +1,20 @@
-# NAS 배포용 compose. /volume1/docker/hidongdong_web/ 에서 실행됨.
-# .env 가 같은 디렉터리에 있어야 함 (DB 비밀번호 등).
+# NAS 개발(dev) 배포용 compose. /volume1/docker/hidongdong_web_dev/ 에서 실행됨.
+# 운영(/volume1/docker/hidongdong_web/) 와 같은 NAS 에서 분리 운용:
+#   - 포트: web 3012 / api 4012  (운영은 3011 / 4011)
+#   - 컨테이너 이름: hidongdong-dev-*  (운영은 hidongdong-*)
+#   - DB 볼륨: hidongdong-dev-db-data  (운영과 별도)
+# Dockerfile/nginx.conf 는 운영(deploy/nas/) 의 것을 동일하게 복사해 둠.
 
 services:
   db:
     image: mariadb:10.3
-    container_name: hidongdong-db
+    container_name: hidongdong-dev-db
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       MYSQL_DATABASE: ${DB_DATABASE:-wowkiki}
     volumes:
-      - hidongdong-db-data:/var/lib/mysql
-      # 데이터 dump(db/dump.sql) 적재 후 271833 스키마 추가분(schema-delta)을 얹음
+      - hidongdong-dev-db-data:/var/lib/mysql
       - ./db/dump.sql:/tmp/dump.sql:ro
       - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
       - ./db/schema-delta.sql:/docker-entrypoint-initdb.d/02-schema-delta.sql:ro
@@ -20,8 +23,6 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      # healthcheck.sh 는 기본 credential 만 사용해서 root 비번 설정시 실패함.
-      # mysqladmin ping 으로 직접 확인.
       test: ["CMD-SHELL", "mysqladmin --user=root --password=$$MYSQL_ROOT_PASSWORD ping --silent"]
       interval: 5s
       timeout: 5s
@@ -31,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: hidongdong-api
+    container_name: hidongdong-dev-api
     restart: unless-stopped
     environment:
       DB_HOST: db
@@ -41,21 +42,14 @@ services:
       DB_DATABASE: ${DB_DATABASE:-wowkiki}
       FILES_BASE_URL: ${FILES_BASE_URL:-}
       FILES_ORIGIN: ${FILES_ORIGIN:-}
-      # Unity 클라이언트 음성파일 업로드 저장 위치(컨테이너 내부). 아래 volume 과 짝.
-      DATACENTER_DIR: /dataCenter
       ALIGO_KEY: ${ALIGO_KEY:-}
       ALIGO_USER_ID: ${ALIGO_USER_ID:-}
       ALIGO_SENDER: ${ALIGO_SENDER:-}
+      # 컨테이너 내부 포트는 4011 로 고정 — nginx.conf 가 api:4011 로 프록시함.
+      # 호스트 포트만 4012 로 매핑해서 운영(4011) 과 충돌 회피.
       PORT: 4011
     ports:
-      - "4011:4011"
-    volumes:
-      # 파일 서버(files_wowkiki)가 서빙하는 NAS dataCenter 디렉터리를 RW 로 공유.
-      # 업로드된 wav 가 즉시 api.wowkiki.kr/dataCenter/... 로 노출됨.
-      - /volume1/docker/files_wowkiki/dataCenter:/dataCenter
-    networks:
-      - default
-      - wowkiki-net   # files_wowkiki(nginx)가 api.wowkiki.kr/api/ 를 프록시할 수 있도록 공유
+      - "4012:4011"
     depends_on:
       db:
         condition: service_healthy
@@ -64,17 +58,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-    container_name: hidongdong-web
+    container_name: hidongdong-dev-web
     restart: unless-stopped
     ports:
-      - "3011:80"
+      - "3012:80"
     depends_on:
       - api
 
 volumes:
-  hidongdong-db-data:
-
-networks:
-  # 사전 생성 필요(1회): docker network create wowkiki-net
-  wowkiki-net:
-    external: true
+  hidongdong-dev-db-data:

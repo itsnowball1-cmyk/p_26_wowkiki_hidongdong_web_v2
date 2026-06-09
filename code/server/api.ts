@@ -1,4 +1,7 @@
 import { createConnection, type Connection, type RowDataPacket, type ResultSetHeader } from 'mysql2/promise'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 // ─── 환경 타입 ───────────────────────────────────────────────────────────────
 
@@ -10,6 +13,8 @@ export type Env = {
   DB_DATABASE: string
   FILES_BASE_URL: string
   FILES_ORIGIN?: string
+  // NAS dataCenter 디렉터리(컨테이너 내부 마운트 경로). 음성파일을 여기에 직접 기록.
+  DATACENTER_DIR?: string
   ALIGO_KEY: string
   ALIGO_USER_ID: string
   ALIGO_SENDER: string
@@ -96,7 +101,7 @@ type StaffRow = RowDataPacket & {
 
 const TEXT_FIELD_TYPES = new Set(['VAR_STRING', 'STRING', 'BLOB', 'TINY_BLOB', 'MEDIUM_BLOB', 'LONG_BLOB'])
 
-async function getConn(env: Env): Promise<Connection> {
+async function getConn(env: Env, opts: { dateStrings?: boolean } = {}): Promise<Connection> {
   return createConnection({
     host: env.DB_HOST,
     port: Number(env.DB_PORT),
@@ -106,6 +111,9 @@ async function getConn(env: Env): Promise<Connection> {
     charset: 'utf8mb4',
     disableEval: true,
     timezone: '+00:00',
+    // 레거시(Unity 클라이언트) 엔드포인트는 PHP/mysqli 와 동일하게 날짜를 문자열로 반환해야
+    // 클라이언트가 birth_date/regist_date 등을 그대로 파싱할 수 있다.
+    dateStrings: opts.dateStrings === true,
     // mysql2 in Cloudflare Workers decodes text bytes as Latin-1; force UTF-8.
     // Buffer polyfill is not a true Uint8Array so we must Array.from() first.
     typeCast(field, next) {
@@ -119,8 +127,8 @@ async function getConn(env: Env): Promise<Connection> {
   })
 }
 
-async function withConn<T>(env: Env, fn: (conn: Connection) => Promise<T>): Promise<T> {
-  const conn = await getConn(env)
+async function withConn<T>(env: Env, fn: (conn: Connection) => Promise<T>, opts: { dateStrings?: boolean } = {}): Promise<T> {
+  const conn = await getConn(env, opts)
   try {
     await conn.query("SET NAMES 'utf8mb4'")
     return await fn(conn)
@@ -181,7 +189,7 @@ function parseAnalysislog(raw: string | null): {
       summary:          sound,
       trained_sound:    sound,
       tags_json:        summ.act_type ? JSON.stringify([summ.act_type]) : null,
-      try_count:        stats.find(s => s.stts_id === 'TOTAL_PCC')?.ttl_cnt ?? null,
+      try_count:        stats.find(s => s.stts_id === 'TOTAL_PCC')?.ttl_cnt || null,
       consonant_pct:    utapStat ? Math.round(utapStat.score) : null,
       word_pos_pct:     pcc ? Math.round(pcc.score) : null,
       vowel_pct:        pvcStat ? Math.round(pvcStat.score) : null
@@ -348,6 +356,86 @@ const json = (data: unknown, init: ResponseInit = {}) =>
 
 const err = (status: number, message: string) => json({ error: message }, { status })
 
+// ─── 레거시(Unity 클라이언트) 응답 봉투 ───────────────────────────────────────
+// PHP resultJsonUtils.php 의 getResultMapJson/getResultOnlyMessageJson 과 동일 형태:
+//   { ...map, success: <bool>, message: <코드별 한국어 메시지> }
+// HTTP 상태는 항상 200 (클라이언트는 HTTP 200 + success/필드로 성공 판정).
+
+const LEGACY_MSG: Record<string, string> = {
+  '0': '성공', '-1': '쿼리중 알수 없는 오류 발생', '-3': '전달된 값이 없습니다.',
+  '-4': '존재하지 않는 회원입니다.', '-10': '필수 입력 값 중 누락된 값이 존재합니다.',
+  '-15': '요청 사항을 알 수가 없습니다.',
+  '-17': '존재하지 않는 데이터 입니다.', '-18': '이미 존재하는 데이터 입니다.',
+  '-22': '업로드된 파일이 없습니다.', '-98': '조회 결과가 없습니다.',
+  '-99': '데이터 베이스 연결에 실패하였습니다.',
+  '-10001': '인증에 실패하였습니다.', '-10006': '스토리지 서비스의 잘못된 키입니다.',
+  '-10007': '중지된 스토리지 서비스입니다.', '-10008': '폴더가 존재하지 않습니다.',
+  '-20003': '아이디가 존재하지 않거나, 비밀번호가 일치하지 않습니다.',
+  '-30001': '필요한 parameter가 부족합니다.', '-30002': '필요한 parameter가 잘못 됐습니다.',
+}
+const legacyMsgText = (code: number | string) => LEGACY_MSG[String(code)] ?? '알수 없는 오류 코드'
+
+// getResultMapJson($success, $code, $map)
+const legacyMap = (success: boolean, code: number | string, map: Record<string, unknown> = {}) =>
+  json({ ...map, success, message: legacyMsgText(code) })
+// getResultOnlyMessageJson($success, $code)
+const legacyMsg = (success: boolean, code: number | string) =>
+  json({ success, message: legacyMsgText(code) })
+
+// Unity 클라이언트는 GET 에도 JSON 본문을 싣어 보낸다(php://input). rawBody 에서 파싱.
+function legacyBody(rawBody: Buffer | undefined): Record<string, unknown> {
+  if (!rawBody || rawBody.length === 0) return {}
+  try { const v = JSON.parse(rawBody.toString('utf8')); return v && typeof v === 'object' ? v : {} }
+  catch { return {} }
+}
+const trimStr = (v: unknown) => (v == null ? '' : String(v)).trim()
+
+// ─── 레거시 조음 통계/오조음 유틸 (JoumUtil_duck.php 포팅) ──────────────────────
+const STAT_LABEL: Record<string, string> = {
+  UTAP_PCC: '자음정확도', TOTAL_PCC: '전체 자음정확도', PWC: '단어단위정확률',
+  PMLU: '평균음운길이', PWP: '단어단위근접률', PVC: '모음정확도', JOUM_MANNER: '조음 방법',
+}
+type StatObj = {
+  stts_id: string; attr: unknown; label: string; ttl_cnt: unknown; crnt_cnt: unknown
+  score: unknown; avr: unknown; prcntl: unknown; lv: unknown; lv_label: unknown
+}
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function statFromRow(row: any): StatObj {
+  return {
+    stts_id: row.stts_id, attr: row.attr ?? '', label: STAT_LABEL[row.stts_id] ?? row.stts_id,
+    ttl_cnt: row.ttl_cnt ?? 0, crnt_cnt: row.crnt_cnt ?? 0, score: row.score ?? 0,
+    avr: row.avr ?? 0, prcntl: row.prcntl ?? '', lv: row.lv ?? 0, lv_label: row.lv_label ?? '',
+  }
+}
+const emptyStat = (): StatObj => ({ stts_id: '', attr: '', label: '', ttl_cnt: 0, crnt_cnt: 0, score: 0, avr: 0, prcntl: '', lv: 0, lv_label: '' })
+// StatisticUtil::getTarget — 지표 1개 매칭(없으면 빈 객체)
+function statGetTarget(indicator: string, arr: any): StatObj {
+  if (Array.isArray(arr)) for (const row of arr) if ((row?.stts_id ?? '') === indicator) return statFromRow(row)
+  return emptyStat()
+}
+// StatisticUtil::getTargetList — 지표 목록 각각 첫 매칭
+function statGetTargetList(indicators: string[], arr: any): StatObj[] {
+  const out: StatObj[] = []
+  if (!Array.isArray(arr)) return out
+  for (const ind of indicators) for (const row of arr) if ((row?.stts_id ?? '') === ind) { out.push(statFromRow(row)); break }
+  return out
+}
+// OjoumUtil::getOjoumList — mispronunciations[].e_list[] 평탄화
+function ojoumList(mispron: any): Array<{ aim_joum: unknown; pos: unknown; ch_joum: unknown; e_ctgr: unknown; e_attr: unknown }> {
+  const out: Array<{ aim_joum: unknown; pos: unknown; ch_joum: unknown; e_ctgr: unknown; e_attr: unknown }> = []
+  if (!Array.isArray(mispron)) return out
+  for (const row of mispron) {
+    const el = row?.e_list
+    if (el != null && Array.isArray(el)) for (const d of el) out.push({
+      aim_joum: d?.aim_joum ?? d?.a_jm ?? '', pos: d?.pos ?? '', ch_joum: d?.ch_joum ?? d?.c_jm ?? '',
+      e_ctgr: d?.e_ctgr ?? d?.ctgr ?? '', e_attr: d?.e_attr ?? d?.attr ?? '',
+    })
+  }
+  return out
+}
+const tryJson = (s: unknown): any => { if (typeof s !== 'string' || s === '') return null; try { return JSON.parse(s) } catch { return null } }
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // ─── 인증 헬퍼 ───────────────────────────────────────────────────────────────
 
 async function getCurrentUser(conn: Connection, request: Request): Promise<StaffRow | null> {
@@ -434,7 +522,16 @@ async function handleLogin(request: Request, conn: Connection): Promise<Response
 // ─── 메인 라우터 ─────────────────────────────────────────────────────────────
 
 // 정적 파일/SPA 는 nginx 가 서빙하고, 이 핸들러는 /api/* 와 /dataCenter/ 프록시만 처리한다.
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
+// Unity 클라이언트(p_25)가 쓰는 레거시 평문 루트 엔드포인트.
+// 이 경로들은 PHP 레거시 백엔드와 동일 동작을 재현하며, 날짜는 문자열로 반환한다.
+const LEGACY_PATHS = new Set([
+  '/test', '/alogin', '/signup', '/member_list', '/samename_child_list',
+  '/child_detail', '/child_actlog_list', '/child_actlog_detail',
+  '/save_child_actlog', '/load_trainingset', '/save_trainingset',
+  '/generate-uuid', '/storage/fileup_duck', '/storage/filedown_duck',
+])
+
+export async function handleRequest(request: Request, env: Env, rawBody?: Buffer): Promise<Response> {
   const url = new URL(request.url)
 
   // 녹음 파일 프록시: /dataCenter/... → FILES_ORIGIN 서버로 전달
@@ -450,13 +547,14 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return new Response(res.body, { status: res.status, headers })
   }
 
-  if (!url.pathname.startsWith('/api/')) return err(404, 'not found')
+  const isLegacy = LEGACY_PATHS.has(url.pathname)
+  if (!url.pathname.startsWith('/api/') && !isLegacy) return err(404, 'not found')
 
-  return withConn(env, conn => handleApi(url, request, conn, env))
+  return withConn(env, conn => handleApi(url, request, conn, env, rawBody), { dateStrings: isLegacy })
     .catch((e: unknown) => err(500, e instanceof Error ? e.message : 'internal error'))
 }
 
-async function handleApi(url: URL, request: Request, conn: Connection, env: Env): Promise<Response> {
+async function handleApi(url: URL, request: Request, conn: Connection, env: Env, rawBody?: Buffer): Promise<Response> {
   const path   = url.pathname
   const method = request.method
 
@@ -781,6 +879,302 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
     if (path === '/api/db-ping' && method === 'GET') {
       const [[{ v }]] = await conn.query('SELECT ? AS v', ['pong']) as [Array<{ v: string }>, unknown]
       return json({ ok: true, echo: v })
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 레거시(Unity 클라이언트, p_25) 평문 루트 엔드포인트.
+    // 레거시 PHP 백엔드(참고_backend RouterDiag/UserControllerDiag)와 동일 동작 재현.
+    // - 대부분 GET 이지만 본문(JSON)을 싣어 보낸다 → rawBody 에서 파싱(legacyBody).
+    // - 응답 봉투: { ...map, success, message } (HTTP 항상 200).
+    // - 날짜는 dateStrings 연결로 'YYYY-MM-DD[ HH:mm:ss]' 문자열 반환(PHP/mysqli 동일).
+    // ════════════════════════════════════════════════════════════════════════
+    if (LEGACY_PATHS.has(path)) {
+      const b = legacyBody(rawBody)
+
+      // 연결 확인용
+      if (path === '/test') return legacyMap(true, 0, { router: 'ok' })
+
+      // 로그인(GET, {id,pw}) 겸 상태확인(POST, {code}). code 만 오면 id/pw 빈 값 → -20003.
+      if (path === '/alogin') {
+        const id = trimStr(b.id), pw = trimStr(b.pw)
+        if (id === '' || pw === '') return legacyMsg(false, -20003)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT idx,code,id,mtype,name,is_male_yn,birth_date,parent_name,parent_phone,relation,attribution,instt_code,doctor_code,teacher_code,admin_memo,doctor_memo,teacher_memo,status_yn,regist_date
+           FROM tb_member WHERE id = ? AND pw = ?`, [id, pw])
+        if (rows[0]) return legacyMap(true, 0, { user_info: rows[0] })
+        return legacyMap(false, -10001, { user_info: '' })
+      }
+
+      // 회원가입(주로 아동 등록)
+      if (path === '/signup') {
+        const f = (k: string) => trimStr(b[k])
+        const id = f('id'), pw = f('pw'), mtype = f('mtype'), name = f('name')
+        const is_male_yn = f('is_male_yn'), birth_date = f('birth_date')
+        const parent_name = f('parent_name'), parent_phone = f('parent_phone'), relation = f('relation')
+        if (mtype === 'child') {
+          if (!id || !pw || !mtype || !name || !is_male_yn || !birth_date || !parent_name || !parent_phone || !relation)
+            return legacyMsg(false, -30001)
+        } else if (!id || !pw || !mtype || !name) {
+          return legacyMsg(false, -30001)
+        }
+        const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [id])
+        if (exist[0]) return legacyMsg(false, -18)
+        const [r] = await conn.query<ResultSetHeader>(
+          `INSERT INTO tb_member (id,pw,mtype,name,is_male_yn,birth_date,parent_name,parent_phone,relation,attribution,instt_code,doctor_code,teacher_code,admin_memo,doctor_memo,teacher_memo,status_yn,regist_date)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Y',NOW())`,
+          [id, pw, mtype, name, is_male_yn, birth_date, parent_name, parent_phone, relation,
+           f('attribution'), f('instt_code'), f('doctor_code'), f('teacher_code'), f('admin_memo'), f('doctor_memo'), f('teacher_memo')])
+        if (r.insertId) return legacyMap(true, 0, { insert_id: r.insertId })
+        return legacyMsg(false, -30002)
+      }
+
+      // 기관 내 의사/치료사 목록
+      if (path === '/member_list') {
+        const instt_code = trimStr(b.instt_code), mtype = trimStr(b.mtype)
+        if (instt_code === '' || mtype === '') return legacyMsg(false, -10)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT idx,id,mtype,instt_code,code,name,is_male_yn,birth_date,status_yn,regist_date
+           FROM tb_member WHERE instt_code = ? AND mtype = ? AND IFNULL(delete_yn,'N')='N' ORDER BY name ASC, idx ASC`,
+          [instt_code, mtype])
+        return legacyMap(true, 0, { list: rows })
+      }
+
+      // 같은 이름의 아동 목록
+      if (path === '/samename_child_list') {
+        const name = trimStr(b.name)
+        if (name === '') return legacyMsg(false, -10)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT idx,code,id,mtype,name,is_male_yn,birth_date,parent_name,parent_phone,relation,attribution,instt_code,doctor_code,teacher_code,admin_memo,doctor_memo,teacher_memo,status_yn,regist_date
+           FROM tb_member WHERE name = ? AND mtype = 'child' AND IFNULL(delete_yn,'N')='N' ORDER BY name ASC, idx ASC`,
+          [name])
+        return legacyMap(true, rows.length ? 0 : -98, { list: rows })
+      }
+
+      // 아동 상세(담당 의사/치료사 이름 포함)
+      if (path === '/child_detail') {
+        const id = trimStr(b.id)
+        if (id === '') return legacyMsg(false, -10)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT A.idx,A.code,A.id,A.mtype,A.name,A.is_male_yn,A.birth_date,A.parent_name,A.parent_phone,A.relation,A.attribution,A.instt_code,A.doctor_code,A.teacher_code,A.admin_memo,A.doctor_memo,A.teacher_memo,A.status_yn,A.regist_date,
+                  D.name AS doctor_name, T.name AS teacher_name
+           FROM tb_member A
+           LEFT JOIN tb_member D ON (A.doctor_code = D.code AND A.doctor_code != '' AND A.doctor_code IS NOT NULL)
+           LEFT JOIN tb_member T ON (A.teacher_code = T.code AND A.teacher_code != '' AND A.teacher_code IS NOT NULL)
+           WHERE A.id = ?`, [id])
+        if (rows[0]) return legacyMap(true, 0, { user_info: rows[0] })
+        return legacyMap(false, -98, { user_info: '' })
+      }
+
+      // 활동로그 저장(INSERT: idx=-1, UPDATE: idx>=0). insert_id 는 음성파일 폴더(idx_xxx)로 쓰임.
+      if (path === '/save_child_actlog') {
+        const id = trimStr(b.id)
+        if (id === '') return legacyMsg(false, -30001)
+        const idx = b.idx == null ? -1 : parseInt(String(b.idx), 10)
+        const toStr = (v: unknown) => v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v))
+        const cols = [
+          id, b.age ?? '', b.instt_code ?? '', b.doctor_code ?? '', b.teacher_code ?? '',
+          b.use_type ?? '', b.act_type ?? '', b.act_date ?? '', b.last_qz_nth ?? '', b.done_yn ?? 'Y',
+          toStr(b.analysislog), toStr(b.speechlog),
+        ]
+        const [chk] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [id])
+        if (!chk[0]) return legacyMsg(false, -4)
+        if (idx === -1 || isNaN(idx)) {
+          const [r] = await conn.query<ResultSetHeader>(
+            `INSERT INTO tb_childact_report (id,age,instt_code,doctor_code,teacher_code,use_type,act_type,act_date,last_qz_nth,done_yn,analysislog,speechlog)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, cols)
+          return legacyMap(r.affectedRows > 0, r.affectedRows > 0 ? 0 : -1, { idx: r.insertId, affected_rows: r.affectedRows })
+        }
+        const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_childact_report WHERE idx = ? LIMIT 1`, [idx])
+        if (!exist[0]) return legacyMsg(false, -98)
+        const [r] = await conn.query<ResultSetHeader>(
+          `UPDATE tb_childact_report SET id=?,age=?,instt_code=?,doctor_code=?,teacher_code=?,use_type=?,act_type=?,act_date=?,last_qz_nth=?,done_yn=?,analysislog=?,speechlog=? WHERE idx=?`,
+          [...cols, idx])
+        return legacyMap(true, 0, { idx, affected_rows: r.affectedRows })
+      }
+
+      // 훈련설정 불러오기
+      if (path === '/load_trainingset') {
+        const child_id = trimStr(b.child_id)
+        if (child_id === '') return legacyMsg(false, -4)
+        const idx = b.idx == null || trimStr(b.idx) === '' ? -1 : parseInt(String(b.idx), 10)
+        const cols = `idx,child_id,aim_joum,pos,coreword,tr_words,rsrvd_date,suit_age,growth_grade,is_ojoum_del_yn,is_only_noun_yn,is_cvcword_del_yn,min_len,max_len,can_read_yn,orderby_evowels_yn,orderby_ewords_yn`
+        const [rows] = (idx !== -1 && !isNaN(idx))
+          ? await conn.query<RowDataPacket[]>(`SELECT ${cols} FROM tb_trainingset WHERE idx = ?`, [idx])
+          : await conn.query<RowDataPacket[]>(`SELECT ${cols} FROM tb_trainingset WHERE child_id = ? ORDER BY idx DESC LIMIT 1`, [child_id])
+        if (rows[0]) return legacyMap(true, 0, { trainingset: rows[0] })
+        return legacyMap(false, -98, { trainingset: '' })
+      }
+
+      // 훈련설정 저장(INSERT/UPDATE)
+      if (path === '/save_trainingset') {
+        const child_id = trimStr(b.child_id)
+        if (child_id === '') return legacyMsg(false, -4)
+        const idx = b.idx == null || trimStr(b.idx) === '' ? -1 : parseInt(String(b.idx), 10)
+        const v = [
+          b.child_id ?? null, b.aim_joum ?? null, b.pos ?? null, b.coreword ?? null, b.tr_words ?? null,
+          b.rsrvd_date ?? null, b.suit_age ?? null, (b.groth_grade ?? b.growth_grade ?? null),
+          b.is_ojoum_del_yn ?? null, b.is_only_noun_yn ?? null, b.is_cvcword_del_yn ?? null,
+          b.min_len ?? null, b.max_len ?? null, b.can_read_yn ?? null, b.orderby_evowels_yn ?? null, b.orderby_ewords_yn ?? null,
+        ]
+        if (idx !== -1 && !isNaN(idx)) {
+          const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_trainingset WHERE idx = ?`, [idx])
+          if (!exist[0]) return legacyMsg(false, -98)
+          await conn.query<ResultSetHeader>(
+            `UPDATE tb_trainingset SET child_id=?,aim_joum=?,pos=?,coreword=?,tr_words=?,rsrvd_date=?,suit_age=?,growth_grade=?,is_ojoum_del_yn=?,is_only_noun_yn=?,is_cvcword_del_yn=?,min_len=?,max_len=?,can_read_yn=?,orderby_evowels_yn=?,orderby_ewords_yn=? WHERE idx=?`,
+            [...v, idx])
+          return legacyMap(true, 0, { idx })
+        }
+        const [r] = await conn.query<ResultSetHeader>(
+          `INSERT INTO tb_trainingset (child_id,aim_joum,pos,coreword,tr_words,rsrvd_date,suit_age,growth_grade,is_ojoum_del_yn,is_only_noun_yn,is_cvcword_del_yn,min_len,max_len,can_read_yn,orderby_evowels_yn,orderby_ewords_yn)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v)
+        if (r.insertId) return legacyMap(true, 0, { idx: r.insertId })
+        return legacyMap(false, -1, { idx: -1 })
+      }
+
+      // UUID 생성
+      if (path === '/generate-uuid') return legacyMap(true, 0, { uuid: randomUUID() })
+
+      // 음성파일 업로드 → NAS dataCenter 직접 저장 + tb_data_list/tb_data_file 기록
+      if (path === '/storage/fileup_duck') {
+        if (!env.DATACENTER_DIR) return legacyMsg(false, -99)
+        const cateCode = trimStr(b.CATE_CODE), folderName = trimStr(b.FOLDER_NAME), title = trimStr(b.TITLE)
+        const files = Array.isArray(b.FILES) ? (b.FILES as Array<{ FILE?: string; FILENAME?: string }>) : []
+        if (!cateCode || !folderName || !title) return legacyMsg(false, -10)
+        if (files.length === 0) return legacyMsg(false, -22)
+
+        // 경로 조작 차단. 정상 폴더명은 idx_숫자.
+        const safeFolder = folderName.replace(/[^A-Za-z0-9가-힣_.-]/g, '_')
+        const [folderRows] = await conn.query<RowDataPacket[]>(
+          `SELECT sft_idx FROM tb_storage_folder WHERE stfName = ? LIMIT 1`, [cateCode])
+        const sftIdx = (folderRows[0] as { sft_idx: number } | undefined)?.sft_idx ?? null
+
+        const [listResult] = await conn.query<ResultSetHeader>(
+          `INSERT INTO tb_data_list (serCode, sft_idx, data_title, cate_code, stfName) VALUES ('HIDONGDONG', ?, ?, ?, ?)`,
+          [sftIdx, title, cateCode, safeFolder])
+        const dataIdx = listResult.insertId
+
+        const destDir = join(env.DATACENTER_DIR, 'data', safeFolder)
+        await mkdir(destDir, { recursive: true })
+
+        const uploaded: Array<{ filename: string; size: number }> = []
+        const failed: Array<{ index: number; filename: string; error: string }> = []
+        for (let i = 0; i < files.length; i++) {
+          const item = files[i]
+          const original = trimStr(item?.FILENAME)
+          if (!item?.FILE || !original) { failed.push({ index: i, filename: original, error: 'missing data' }); continue }
+          const bytes = Buffer.from(item.FILE, 'base64')
+          if (bytes.length === 0) { failed.push({ index: i, filename: original, error: 'invalid base64' }); continue }
+          const ext = (original.includes('.') ? original.slice(original.lastIndexOf('.') + 1) : 'wav').replace(/[^A-Za-z0-9]/g, '') || 'wav'
+          const storedName = `${Date.now()}${String(i).padStart(3, '0')}.${ext}`
+          try { await writeFile(join(destDir, storedName), bytes) }
+          catch { failed.push({ index: i, filename: original, error: 'write failed' }); continue }
+          const fileNm = `/data/${safeFolder}/${storedName}`
+          await conn.query(
+            `INSERT INTO tb_data_file (file_nm, attach_type, source_file_nm, file_size, data_idx) VALUES (?, 'A', ?, ?, ?)`,
+            [fileNm, original.slice(0, 150), bytes.length, dataIdx])
+          uploaded.push({ filename: storedName, size: bytes.length })
+        }
+        return legacyMap(true, 0, { data_idx: dataIdx, uploaded, failed })
+      }
+
+      // 음성파일 목록 조회
+      if (path === '/storage/filedown_duck') {
+        const FOLDER_NAME = trimStr(b.FOLDER_NAME)
+        if (FOLDER_NAME === '') return legacyMsg(false, -10)
+        const serCode = 'HIDONGDONG'
+        const [svc] = await conn.query<RowDataPacket[]>(`SELECT serRegiState, serName FROM tb_storage_service WHERE serCode = ?`, [serCode])
+        if (!svc[0]) return legacyMsg(false, -10006)
+        if ((svc[0] as { serRegiState?: string }).serRegiState === '02') return legacyMsg(false, -10007)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT IFNULL(A.file_nm,'') AS file_nm, IFNULL(A.file_size,'') AS file_size, IFNULL(A.source_file_nm,'') AS source_file_nm,
+                  CONCAT('https://api.wowkiki.kr/dataCenter', IFNULL(A.file_nm,'')) AS file_url
+           FROM tb_data_file A INNER JOIN tb_data_list B ON B.data_idx = A.data_idx
+           WHERE B.stfName = ? AND B.serCode = ?`, [FOLDER_NAME, serCode])
+        if (rows[0]) return legacyMap(true, 0, { file_list: rows })
+        return legacyMap(true, -10008, {})
+      }
+
+      // 활동로그 목록(이력 화면). 행마다 analysislog/speechlog(JSON 문자열)를 파싱해
+      // speechlog_list / statistic_list(자음정확도 1개) / smmr_list / mispron_list / ojoum_list 파생.
+      if (path === '/child_actlog_list') {
+        const child_id = trimStr(b.child_id)
+        if (child_id === '') return legacyMsg(false, -10)
+        const actlog_usetype = trimStr(b.actlog_usetype)
+        const search_jogun = trimStr(b.search_jogun)
+        const keyword = trimStr(b.keyword)
+        const size = 10
+        const page = b.page != null && !isNaN(parseInt(String(b.page), 10)) ? parseInt(String(b.page), 10) : 1
+
+        let squery = ''
+        const searchParam: unknown[] = []
+        if (search_jogun === 'name' && keyword !== '') { squery = ` AND A.name like CONCAT("%", ?, "%")`; searchParam.push(keyword) }
+        else if (search_jogun === 'act_date' && keyword !== '') { squery = ` AND A.act_date like CONCAT("%", ?, "%")`; searchParam.push(keyword) }
+
+        const [cntRows] = await conn.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS totcnt FROM tb_childact_report A WHERE A.id = ? AND A.use_type = ?${squery}`,
+          [child_id, actlog_usetype, ...searchParam])
+        const tcnt = (cntRows[0] as { totcnt?: number } | undefined)?.totcnt ?? 0
+
+        const start = (page - 1) * size
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT A.idx, A.id, A.age, A.instt_code, IFNULL(A.doctor_code,'') AS doctor_code, IFNULL(A.teacher_code,'') AS teacher_code,
+                  A.use_type, A.act_type, A.last_qz_nth, A.done_yn, A.analysislog, A.speechlog, A.act_date
+           FROM tb_childact_report A WHERE A.id = ? AND A.use_type = ?${squery} ORDER BY A.act_date DESC LIMIT ?, ?`,
+          [child_id, actlog_usetype, ...searchParam, start, size])
+
+        const speechlog_list: unknown[] = [], statistic_list: unknown[] = [], smmr_list: unknown[] = []
+        const mispron_list: unknown[] = [], ojoum_list: unknown[] = []
+        for (const row of rows as Array<RowDataPacket & { analysislog: string | null; speechlog: string | null }>) {
+          const sp = tryJson(row.speechlog)
+          speechlog_list.push(sp && Array.isArray(sp.logLst) ? sp.logLst : [])
+          const an = tryJson(row.analysislog)
+          if (an) {
+            smmr_list.push(an.summary ?? [])
+            statistic_list.push(statGetTarget('UTAP_PCC', an.statistics))
+            mispron_list.push(an.mispronunciations ?? [])
+            ojoum_list.push(ojoumList(an.mispronunciations))
+          } else {
+            smmr_list.push([]); statistic_list.push(emptyStat()); mispron_list.push([]); ojoum_list.push([])
+          }
+        }
+        return legacyMap(true, 0, {
+          cnt: rows.length, list: rows, speechlog_list, statistic_list, smmr_list,
+          mispron_list, ojoum_list, page, tcnt, page_size: size,
+        })
+      }
+
+      // 활동로그 상세(1건). 통계는 4개 지표(getTargetList).
+      if (path === '/child_actlog_detail') {
+        const actlog_idx = trimStr(b.actlog_idx)
+        if (actlog_idx === '') return legacyMsg(false, -10)
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT A.idx, A.id, A.age, A.instt_code, IFNULL(A.doctor_code,'') AS doctor_code, IFNULL(A.teacher_code,'') AS teacher_code,
+                  A.use_type, A.act_type, A.act_date, A.last_qz_nth, A.done_yn, A.analysislog, A.speechlog
+           FROM tb_childact_report A WHERE A.idx = ?`, [actlog_idx])
+        let speechlog_list: unknown = [], summary: unknown = [], statistic_list: unknown[] = []
+        let mispron_list: unknown = [], ojoum_list: unknown[] = []
+        const row = rows[0] as (RowDataPacket & { analysislog: string | null; speechlog: string | null }) | undefined
+        if (row) {
+          const sp = tryJson(row.speechlog)
+          speechlog_list = sp && Array.isArray(sp.logLst) ? sp.logLst : []
+          const an = tryJson(row.analysislog)
+          if (an) {
+            summary = an.summary ?? []
+            statistic_list = statGetTargetList(['UTAP_PCC', 'TOTAL_PCC', 'PMLU', 'PWP'], an.statistics)
+            mispron_list = an.mispronunciations ?? []
+            ojoum_list = ojoumList(an.mispronunciations)
+          }
+          return legacyMap(true, 0, {
+            actlog_list: rows, has_record: true,
+            speechlog_list, summary, statistic_list, mispron_list, ojoum_list,
+          })
+        }
+        return legacyMap(false, -98, {
+          has_record: false, speechlog_list, summary, statistic_list, mispron_list, ojoum_list,
+        })
+      }
+
+      return legacyMsg(false, -15)
     }
 
     // ── 인증 필요 ────────────────────────────────────────────────────────────
@@ -3024,6 +3418,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
       type TreatDetailRow = RowDataPacket & { idx: number; child_member_id: string; act_date: unknown; analysislog: string | null; speech_count: number | null }
       const trow = trows[0] as TreatDetailRow
       const tp = parseAnalysislog(trow.analysislog)
+      const tpDetail = parseAnalysislogDetail(trow.analysislog)
       const [sessRows] = await conn.query<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM tb_childact_report
          WHERE id = ? AND use_type = 'training'
@@ -3058,6 +3453,56 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         const e = weekMap[d] ?? { acc: [], tries: [], mins: [] }
         return { day: DOW_KR[d], accuracy: tdAvg(e.acc), tries: tdSum(e.tries), minutes: tdSum(e.mins) }
       })
+      // ─── 베이스라인 진단(가장 최근 diagnostic) 기반 개선/다음 단계 ─────────────
+      const [diagRows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, act_date, analysislog FROM tb_childact_report
+         WHERE id = ? AND use_type = 'diagnostic'
+         ORDER BY act_date DESC, idx DESC LIMIT 1`,
+        [trow.child_member_id])
+      let baseline: {
+        id: number; examined_at: string | null;
+        consonant_pct: number | null; word_pos_pct: number | null; vowel_pct: number | null;
+        error_phoneme_count: number;
+      } | null = null
+      let improvement: {
+        consonant_delta: number | null; word_pos_delta: number | null; vowel_delta: number | null;
+        error_phoneme_reduced: number | null;
+      } | null = null
+      if (diagRows[0]) {
+        const drow = diagRows[0] as RowDataPacket & { idx: number; act_date: unknown; analysislog: string | null }
+        const dParse  = parseAnalysislog(drow.analysislog)
+        const dDetail = parseAnalysislogDetail(drow.analysislog)
+        baseline = {
+          id: drow.idx,
+          examined_at: fmtDateTime(drow.act_date),
+          consonant_pct: dParse.consonant_pct,
+          word_pos_pct:  dParse.word_pos_pct,
+          vowel_pct:     dParse.vowel_pct,
+          error_phoneme_count: dDetail.error_position.length,
+        }
+        const delta = (cur: number | null, base: number | null) =>
+          cur != null && base != null ? Math.round((cur - base) * 10) / 10 : null
+        improvement = {
+          consonant_delta: delta(tp.consonant_pct, dParse.consonant_pct),
+          word_pos_delta:  delta(tp.word_pos_pct,  dParse.word_pos_pct),
+          vowel_delta:     delta(tp.vowel_pct,     dParse.vowel_pct),
+          error_phoneme_reduced: dDetail.error_position.length - tpDetail.error_position.length,
+        }
+      }
+
+      // ─── 다음 단계 제안 — 자음정확도 90 이상 도달시 ────────────────────────
+      let next_step: { sound: string | null; threshold: number; achieved: number; message: string } | null = null
+      const NEXT_STEP_THRESHOLD = 90
+      if (tp.consonant_pct != null && tp.consonant_pct >= NEXT_STEP_THRESHOLD) {
+        const soundLabel = tp.trained_sound ? `현재 음소(${tp.trained_sound})` : '현재 훈련 음소'
+        next_step = {
+          sound: tp.trained_sound,
+          threshold: NEXT_STEP_THRESHOLD,
+          achieved: tp.consonant_pct,
+          message: `${soundLabel}의 자음정확도가 ${tp.consonant_pct}% 로 다음 단계 기준(${NEXT_STEP_THRESHOLD}%)을 충족했습니다. 다음 음소·위치 또는 단어→문장 단계로의 진행을 권장합니다.`,
+        }
+      }
+
       return json({
         id: trow.idx, identifier: trow.child_member_id,
         service_started_at: fmtDate(serviceStartedAt),
@@ -3065,7 +3510,21 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env)
         trained_sound: tp.trained_sound, accuracy_pct: tp.accuracy_pct,
         try_count: tp.try_count ?? trow.speech_count ?? null, duration_minutes: tp.duration_minutes,
         tags: tp.tags_json ? (JSON.parse(tp.tags_json) as string[]) : [],
-        weekly
+        weekly,
+        // 진단 상세와 동일한 풀 분석
+        duration_label:     tpDetail.duration_label,
+        statistics:         tpDetail.statistics,
+        revised_statistics: tpDetail.revised_statistics,
+        mispronunciations:  tpDetail.mispronunciations,
+        error_position:     tpDetail.error_position,
+        error_rank:         tpDetail.error_rank,
+        stimulability:      tpDetail.stimulability,
+        consonant_pct:      tp.consonant_pct,
+        word_pos_pct:       tp.word_pos_pct,
+        vowel_pct:          tp.vowel_pct,
+        baseline,
+        improvement,
+        next_step,
       })
     }
 

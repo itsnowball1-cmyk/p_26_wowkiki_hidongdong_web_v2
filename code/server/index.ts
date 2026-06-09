@@ -1,5 +1,4 @@
 import http from 'node:http'
-import { Readable } from 'node:stream'
 import { handleRequest, type Env } from './api.js'
 
 const PORT = Number(process.env.PORT ?? 4011)
@@ -22,12 +21,13 @@ const env: Env = {
   DB_DATABASE:    requireEnv('DB_DATABASE'),
   FILES_BASE_URL: process.env.FILES_BASE_URL ?? '',
   FILES_ORIGIN:   process.env.FILES_ORIGIN ?? '',
+  DATACENTER_DIR: process.env.DATACENTER_DIR ?? '',
   ALIGO_KEY:      process.env.ALIGO_KEY ?? '',
   ALIGO_USER_ID:  process.env.ALIGO_USER_ID ?? '',
   ALIGO_SENDER:   process.env.ALIGO_SENDER ?? ''
 }
 
-function nodeReqToWebRequest(req: http.IncomingMessage): Request {
+function nodeReqToWebRequest(req: http.IncomingMessage, rawBody: Buffer): Request {
   const host  = req.headers.host ?? `localhost:${PORT}`
   const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http'
   const url   = `${proto}://${host}${req.url ?? '/'}`
@@ -39,11 +39,18 @@ function nodeReqToWebRequest(req: http.IncomingMessage): Request {
   }
   const method = (req.method ?? 'GET').toUpperCase()
   const init: RequestInit = { method, headers }
-  if (method !== 'GET' && method !== 'HEAD') {
-    init.body = Readable.toWeb(req) as ReadableStream<Uint8Array>
-    ;(init as RequestInit & { duplex?: 'half' }).duplex = 'half'
+  // GET/HEAD 은 Web Request 본문을 가질 수 없다(스펙). Unity 클라이언트는 GET 에도
+  // JSON 본문을 싣어 보내므로, 본문은 별도 rawBody 로 handleRequest 에 전달한다.
+  if (method !== 'GET' && method !== 'HEAD' && rawBody.length > 0) {
+    init.body = new Uint8Array(rawBody)
   }
   return new Request(url, init)
+}
+
+async function readBody(req: http.IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  for await (const c of req) chunks.push(c as Buffer)
+  return Buffer.concat(chunks)
 }
 
 async function writeWebResponse(webRes: Response, res: http.ServerResponse): Promise<void> {
@@ -61,8 +68,9 @@ async function writeWebResponse(webRes: Response, res: http.ServerResponse): Pro
 
 const server = http.createServer(async (req, res) => {
   try {
-    const webReq = nodeReqToWebRequest(req)
-    const webRes = await handleRequest(webReq, env)
+    const rawBody = await readBody(req)
+    const webReq = nodeReqToWebRequest(req, rawBody)
+    const webRes = await handleRequest(webReq, env, rawBody)
     await writeWebResponse(webRes, res)
   } catch (e) {
     console.error('[api] handler error', e)

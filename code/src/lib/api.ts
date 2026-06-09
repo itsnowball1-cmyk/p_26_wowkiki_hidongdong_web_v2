@@ -126,6 +126,38 @@ export type TreatmentDetailDto = {
   duration_minutes: number | null
   tags: string[]
   weekly: Array<{ day: string; accuracy: number; tries: number; minutes: number }>
+  // 진단 상세와 동일한 풀 분석
+  duration_label: string | null
+  statistics: [string, string, string, string][]
+  revised_statistics: [string, string, string, string][]
+  mispronunciations: { word: string; ch_pron: string }[]
+  error_position: { phoneme: string; count: number; types: string; positions: string }[]
+  error_rank: { rank: number; type: string; ratio: string }[]
+  stimulability: unknown[]
+  consonant_pct: number | null
+  word_pos_pct: number | null
+  vowel_pct: number | null
+  // 베이스라인(최근 진단) 비교 + 다음 단계 제안
+  baseline: {
+    id: number
+    examined_at: string | null
+    consonant_pct: number | null
+    word_pos_pct: number | null
+    vowel_pct: number | null
+    error_phoneme_count: number
+  } | null
+  improvement: {
+    consonant_delta: number | null
+    word_pos_delta: number | null
+    vowel_delta: number | null
+    error_phoneme_reduced: number | null
+  } | null
+  next_step: {
+    sound: string | null
+    threshold: number
+    achieved: number
+    message: string
+  } | null
 }
 
 export type CustomListItem = {

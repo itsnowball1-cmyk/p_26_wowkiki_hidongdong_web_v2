@@ -207,6 +207,122 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
               )}
             </section>
 
+            {/* 진단 대비 개선 리포트 */}
+            {detail?.baseline && detail?.improvement && (
+              <section>
+                <SectionTitle>진단 대비 개선</SectionTitle>
+                <ImprovementCard baseline={detail.baseline} current={{
+                  consonant_pct: detail.consonant_pct,
+                  word_pos_pct: detail.word_pos_pct,
+                  vowel_pct: detail.vowel_pct,
+                  error_phoneme_count: detail.error_position.length,
+                }} delta={detail.improvement} />
+              </section>
+            )}
+
+            {/* 다음 단계 제안 — 임계 충족시만 */}
+            {detail?.next_step && (
+              <section>
+                <SectionTitle>다음 단계 제안</SectionTitle>
+                <NextStepCard step={detail.next_step} />
+              </section>
+            )}
+
+            {/* 평가 결과 - 자음정확도 */}
+            <section>
+              <SectionTitle>평가 결과 - 자음정확도</SectionTitle>
+              {(detail?.statistics ?? []).length > 0
+                ? <MetricsTable rows={detail!.statistics} />
+                : <EmptyState />}
+            </section>
+
+            {/* 평가 결과 - 개정 자음정확도 */}
+            <section>
+              <SectionTitle>평가 결과 - 개정 자음정확도</SectionTitle>
+              {(detail?.revised_statistics ?? []).length > 0
+                ? <MetricsTable rows={detail!.revised_statistics} />
+                : <EmptyState />}
+            </section>
+
+            {/* 오류 유형 및 출현율 */}
+            <section>
+              <SectionTitle>오류 유형 및 출현율</SectionTitle>
+              {(detail?.error_rank ?? []).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-surface-chip">
+                        <Th className="w-[280px]">순위</Th>
+                        <Th>오류 유형</Th>
+                        <Th>출현율 (%)</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail!.error_rank.map(row => (
+                        <tr key={row.rank}>
+                          <Td>{row.rank}</Td>
+                          <Td>{row.type}</Td>
+                          <Td>{row.ratio}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <EmptyState />}
+            </section>
+
+            {/* 표준 발음 vs 아동 발음 */}
+            <section>
+              <SectionTitle>표준 발음 vs 아동 발음</SectionTitle>
+              {(detail?.mispronunciations ?? []).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-surface-chip">
+                        <Th>표준 발음</Th>
+                        <Th>아동 발음</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail!.mispronunciations.map(({ word, ch_pron }, i) => (
+                        <tr key={i}>
+                          <Td>{word}</Td>
+                          <Td>{ch_pron}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <EmptyState />}
+            </section>
+
+            {/* 오류 음소 및 위치 */}
+            <section>
+              <SectionTitle>오류 음소 및 위치</SectionTitle>
+              {(detail?.error_position ?? []).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-surface-chip">
+                        <Th className="w-[280px]">오류 음소</Th>
+                        <Th>오류 유형</Th>
+                        <Th>위치</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail!.error_position.map(({ phoneme, count, types, positions }) => (
+                        <tr key={phoneme}>
+                          <Td>{count > 1 ? `${phoneme} (${count})` : phoneme}</Td>
+                          <Td>{types}</Td>
+                          <Td>{positions}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <EmptyState />}
+            </section>
+
             {/* 치료 이력 chart */}
             <section>
               <SectionTitle>치료 이력</SectionTitle>
@@ -289,6 +405,109 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
 /* ---------------------------------- */
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-[18px] font-semibold text-ink-900 mb-4">{children}</h2>
+}
+
+function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <th className={`text-[14px] font-semibold text-ink-900 px-5 py-3 text-center border border-line ${className}`}>{children}</th>
+}
+
+function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <td className={`text-[14px] text-ink-700 px-5 py-3 text-center border border-line ${className}`}>{children}</td>
+}
+
+function EmptyState() {
+  return <div className="text-[14px] text-ink-400">데이터 없음</div>
+}
+
+function MetricsTable({ rows }: { rows: [string, string, string, string][] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="bg-surface-chip">
+            <Th>지표</Th>
+            <Th>원점수 (%)</Th>
+            <Th>백분위</Th>
+            <Th>수준</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              <Td>{row[0]}</Td>
+              <Td>{row[1]}</Td>
+              <Td>{row[2]}</Td>
+              <Td>{row[3]}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ImprovementCard({
+  baseline,
+  current,
+  delta,
+}: {
+  baseline: { examined_at: string | null; consonant_pct: number | null; word_pos_pct: number | null; vowel_pct: number | null; error_phoneme_count: number }
+  current:  { consonant_pct: number | null; word_pos_pct: number | null; vowel_pct: number | null; error_phoneme_count: number }
+  delta:    { consonant_delta: number | null; word_pos_delta: number | null; vowel_delta: number | null; error_phoneme_reduced: number | null }
+}) {
+  const cells: { label: string; before: number | null; after: number | null; diff: number | null; suffix: string }[] = [
+    { label: '자음정확도',              before: baseline.consonant_pct, after: current.consonant_pct, diff: delta.consonant_delta, suffix: '%' },
+    { label: '단어 내 위치별 자음 정확도', before: baseline.word_pos_pct,  after: current.word_pos_pct,  diff: delta.word_pos_delta,  suffix: '%' },
+    { label: '모음정확도',              before: baseline.vowel_pct,    after: current.vowel_pct,    diff: delta.vowel_delta,    suffix: '%' },
+  ]
+  const fmt = (v: number | null, suffix = '%') => v != null ? `${v}${suffix}` : '--'
+  const deltaColor = (d: number | null) => d == null ? 'text-ink-400' : d > 0 ? 'text-[#22A06B]' : d < 0 ? 'text-brand-danger' : 'text-ink-500'
+  const deltaSign  = (d: number | null) => d == null ? '' : d > 0 ? `+${d}` : `${d}`
+  return (
+    <div className="bg-surface-card border border-line rounded-[10px] p-6 space-y-4">
+      <div className="text-[13px] text-ink-500">베이스라인 진단일: {baseline.examined_at ?? '-'}</div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {cells.map(c => (
+          <div key={c.label} className="border border-line rounded-[6px] p-4">
+            <div className="text-[13px] text-ink-500 mb-2">{c.label}</div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[14px] text-ink-700">{fmt(c.before, c.suffix)}</span>
+              <span className="text-[13px] text-ink-400">→</span>
+              <span className="text-[20px] font-bold text-ink-900">{fmt(c.after, c.suffix)}</span>
+              <span className={`text-[14px] font-semibold ml-auto ${deltaColor(c.diff)}`}>
+                {c.diff != null ? `${deltaSign(c.diff)}p` : '--'}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border border-line rounded-[6px] p-4 flex items-baseline gap-2">
+        <span className="text-[13px] text-ink-500">오류 음소 수</span>
+        <span className="text-[14px] text-ink-700 ml-2">{baseline.error_phoneme_count}개</span>
+        <span className="text-[13px] text-ink-400">→</span>
+        <span className="text-[20px] font-bold text-ink-900">{current.error_phoneme_count}개</span>
+        <span className={`text-[14px] font-semibold ml-auto ${deltaColor(delta.error_phoneme_reduced)}`}>
+          {delta.error_phoneme_reduced != null && delta.error_phoneme_reduced !== 0
+            ? (delta.error_phoneme_reduced > 0 ? `−${delta.error_phoneme_reduced}` : `+${-delta.error_phoneme_reduced}`)
+            : '0'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function NextStepCard({ step }: { step: { sound: string | null; threshold: number; achieved: number; message: string } }) {
+  return (
+    <div className="bg-[#F0F8F1] border border-[#22A06B] rounded-[10px] p-5 flex gap-3 items-start">
+      <div className="text-[22px] leading-none">✅</div>
+      <div className="space-y-1">
+        <div className="text-[15px] font-semibold text-[#22A06B]">
+          다음 단계로 진행 권장 (자음정확도 {step.achieved}% ≥ 기준 {step.threshold}%)
+        </div>
+        <div className="text-[14px] text-ink-700">{step.message}</div>
+      </div>
+    </div>
+  )
 }
 
 function MetaLabel({ label, value }: { label: string; value: string }) {
@@ -508,7 +727,7 @@ function RecordingGroup({
   return (
     <div>
       <div className="text-[15px] text-ink-900 mb-3">{label}</div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
+      <div className="flex flex-wrap gap-2">
         {tiles.map((t, i) => {
           const playing = playingIdx === i
           return (
@@ -516,7 +735,7 @@ function RecordingGroup({
               key={i}
               type="button"
               onClick={() => toggle(i, t.url)}
-              className="flex items-center justify-between h-[42px] px-3 bg-white border border-[#C3C3C3] rounded-[5px] hover:border-brand transition-colors"
+              className="flex flex-1 items-center justify-between h-[42px] px-3 min-w-[140px] bg-white border border-[#C3C3C3] rounded-[5px] hover:border-brand transition-colors"
             >
               <span className="text-[14px] text-ink-900 truncate">{t.word}</span>
               <span

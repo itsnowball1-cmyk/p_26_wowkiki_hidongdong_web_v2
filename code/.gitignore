@@ -9,3 +9,4 @@ dist
 figma_exports/
 tmp/
 .claude/
+ckey/

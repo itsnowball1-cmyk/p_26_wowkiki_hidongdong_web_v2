@@ -14,10 +14,12 @@ services:
     volumes:
       - hidongdong-db-data:/var/lib/mysql
       # 데이터: 271543 (init.sh 가 sandbox 라인 제거 후 import)
-      - ./backup/dump-wowkiki-202605271543.sql:/tmp/dump.sql:ro
+      - ./backup/dump-wowkiki_live-202606042143.sql:/tmp/dump.sql:ro
       - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
       # 스키마: 271833 추가분(tb_member 2컬럼 + 신규 5테이블)을 데이터 적재 후 얹음
       - ./db/schema-delta.sql:/docker-entrypoint-initdb.d/02-schema-delta.sql:ro
+      # tb_terms: 약관 테이블 (덤프엔 없는 신규 객체)
+      - ./db/tb_terms-202606021644.sql:/docker-entrypoint-initdb.d/03-tb-terms.sql:ro
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
