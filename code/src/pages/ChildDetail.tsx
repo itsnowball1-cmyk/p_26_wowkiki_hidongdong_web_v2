@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
@@ -40,11 +40,38 @@ const FALLBACK_TREATMENTS: TreatmentListItem[] = [
 
 export default function ChildDetail({ id }: Props) {
   const { go } = useRouter()
+  const { user } = useAuth()
+  const isClinical = user?.institutionCode === 'HBD' || user?.institutionCode === 'TEST'
   const [detail, setDetail] = useState<ChildDetailDto>(FALLBACK_DETAIL)
   const [diagnoses, setDiagnoses] = useState<DiagnosisListItem[]>(FALLBACK_DIAGNOSES)
   const [treatments, setTreatments] = useState<TreatmentListItem[]>(FALLBACK_TREATMENTS)
   const [showRediagModal, setShowRediagModal] = useState(false)
   const [rediagDate, setRediagDate] = useState<string | null>(null)
+  const [customDismissed, setCustomDismissed] = useState(false)
+
+  const needsCustomChange = useMemo(() => {
+    const diagAcc = diagnoses[0]?.accuracy_pct ?? null
+    const trainAcc = treatments[0]?.avg_accuracy_pct ?? null
+    return diagAcc !== null && trainAcc !== null && trainAcc >= diagAcc + 5
+  }, [diagnoses, treatments])
+
+  useEffect(() => {
+    const acked = localStorage.getItem(`hbd_custom_ack_${id}`)
+    if (!acked) { setCustomDismissed(false); return }
+    const [ackedDiag, ackedAccStr] = acked.split('|')
+    const diagKey = diagnoses.length > 0 ? diagnoses[0].examined_at.slice(0, 10) : String(id)
+    if (ackedDiag !== diagKey) { setCustomDismissed(false); return }
+    const ackedAcc = ackedAccStr !== undefined && ackedAccStr !== '' ? Number(ackedAccStr) : null
+    const currentTrainAcc = treatments[0]?.avg_accuracy_pct ?? 0
+    setCustomDismissed(ackedAcc === null || currentTrainAcc < ackedAcc + 5)
+  }, [diagnoses, treatments, id])
+
+  const dismissCustomBanner = useCallback(() => {
+    const diagKey = diagnoses.length > 0 ? diagnoses[0].examined_at.slice(0, 10) : String(id)
+    const trainAcc = treatments[0]?.avg_accuracy_pct ?? ''
+    localStorage.setItem(`hbd_custom_ack_${id}`, `${diagKey}|${trainAcc}`)
+    setCustomDismissed(true)
+  }, [diagnoses, treatments, id])
 
   const loadDetail = () => api.childDetail(id).then(setDetail).catch(() => {})
 
@@ -56,7 +83,7 @@ export default function ChildDetail({ id }: Props) {
         const datePart = rows[0].examined_at.slice(0, 10).replace(/\./g, '-')
         const diagMs = new Date(datePart).getTime()
         const todayMs = new Date(new Date().toISOString().slice(0, 10)).getTime()
-        if (!isNaN(diagMs) && todayMs - diagMs >= 14 * 86400000) {
+        if (isClinical && !isNaN(diagMs) && todayMs - diagMs >= 14 * 86400000) {
           setRediagDate(rows[0].examined_at.slice(0, 10))
           setShowRediagModal(true)
         }
@@ -94,6 +121,43 @@ export default function ChildDetail({ id }: Props) {
               목록으로 돌아가기 &gt;
             </button>
           </div>
+
+          {/* 커스텀 변경 안내 배너 */}
+          {needsCustomChange && !customDismissed && (
+            <div className="w-full border border-[#005744] rounded-[10px] bg-white flex items-center gap-6 px-8 py-5">
+              <div className="flex-shrink-0 w-[56px] h-[56px] rounded-full bg-[#EEF5F0] flex items-center justify-center">
+                <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+                  <polyline points="2,20 9,12 14,16 24,6" stroke="#005744" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <polyline points="18,6 24,6 24,12" stroke="#005744" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] font-bold text-black mb-1">훈련 목표 검토 안내</p>
+                <p className="text-[13px] font-medium text-black leading-relaxed">
+                  아동의 발음 정확도가 진단 대비 5% 이상 향상되었습니다. 다음 훈련을 위해 커스텀 설정을 변경하시겠습니까?
+                </p>
+                <p className="text-[12px] font-medium text-[#767676] mt-0.5">
+                  ※ 현재 설정을 유지할 경우, 이후 정확도가 추가 향상되면 다시 안내됩니다.
+                </p>
+              </div>
+              <div className="flex-shrink-0 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => { dismissCustomBanner(); go({ name: 'custom-detail', id }) }}
+                  className="w-[125px] h-[40px] rounded-[5px] bg-[#005744] text-white text-[14px] font-medium hover:opacity-90 transition"
+                >
+                  커스텀 설정 변경
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissCustomBanner}
+                  className="w-[125px] h-[40px] rounded-[5px] border border-[#005744] text-black text-[14px] font-medium hover:bg-[#005744]/5 transition"
+                >
+                  나중에 변경하기
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Info Table */}
           <InfoCard child={detail.child} childId={id} onUpdate={loadDetail} />
@@ -356,6 +420,7 @@ function InfoCard({
       {showTherapistModal && (
         <AssignTherapistModal
           childId={childId}
+          childName={child.name}
           onAssigned={() => { setShowTherapistModal(false); onUpdate() }}
           onClose={() => setShowTherapistModal(false)}
         />
@@ -369,16 +434,19 @@ function InfoCard({
 /* ---------------------------------- */
 function AssignTherapistModal({
   childId,
+  childName,
   onAssigned,
   onClose
 }: {
   childId: number
+  childName: string
   onAssigned: () => void
   onClose: () => void
 }) {
   const [therapists, setTherapists] = useState<StaffItem[]>([])
   const [loading, setLoading] = useState(true)
   const [assigning, setAssigning] = useState(false)
+  const [pending, setPending] = useState<StaffItem | null>(null)
 
   useEffect(() => {
     api.staff(['therapist'])
@@ -387,59 +455,97 @@ function AssignTherapistModal({
       .finally(() => setLoading(false))
   }, [])
 
-  const handleAssign = async (code: string) => {
+  const handleConfirm = async () => {
+    if (!pending) return
     setAssigning(true)
     try {
-      await api.assignTherapist(childId, code)
+      await api.assignTherapist(childId, pending.code)
       onAssigned()
     } catch {
       alert('배정에 실패했습니다.')
+      setPending(null)
     } finally {
       setAssigning(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div
-        className="bg-white rounded-[8px] w-[400px] max-h-[480px] flex flex-col shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
-          <h3 className="text-[16px] font-semibold text-ink-850">담당 치료사 배정</h3>
-          <button onClick={onClose} className="text-ink-400 hover:text-ink-700">
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M2 2l14 14M16 2 2 16" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          {loading ? (
-            <div className="space-y-2">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="h-10 rounded animate-pulse bg-surface-active" />
-              ))}
-            </div>
-          ) : therapists.length === 0 ? (
-            <p className="text-center text-ink-400 py-8">배정 가능한 치료사가 없습니다.</p>
-          ) : (
-            <ul className="space-y-1">
-              {therapists.map((t) => (
-                <li key={t.code}>
-                  <button
-                    onClick={() => handleAssign(t.code)}
-                    disabled={assigning}
-                    className="w-full h-10 px-4 rounded-[5px] text-left text-[14px] text-ink-700 hover:bg-surface-active transition-colors disabled:opacity-50"
-                  >
-                    {t.name} <span className="text-ink-400 text-[12px]">({t.code})</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+        <div
+          className="bg-white rounded-[8px] w-[400px] max-h-[480px] flex flex-col shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+            <h3 className="text-[16px] font-semibold text-ink-850">담당 치료사 배정</h3>
+            <button onClick={onClose} className="text-ink-400 hover:text-ink-700">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M2 2l14 14M16 2 2 16" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {loading ? (
+              <div className="space-y-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="h-10 rounded animate-pulse bg-surface-active" />
+                ))}
+              </div>
+            ) : therapists.length === 0 ? (
+              <p className="text-center text-ink-400 py-8">배정 가능한 치료사가 없습니다.</p>
+            ) : (
+              <ul className="space-y-1">
+                {therapists.map((t) => (
+                  <li key={t.code}>
+                    <button
+                      onClick={() => setPending(t)}
+                      className="w-full h-10 px-4 rounded-[5px] text-left text-[14px] text-ink-700 hover:bg-surface-active transition-colors"
+                    >
+                      {t.name} <span className="text-ink-400 text-[12px]">({t.code})</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {pending && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-[8px] w-[520px] px-10 py-10 relative shadow-xl">
+            <button
+              onClick={() => setPending(null)}
+              className="absolute top-5 right-5 text-[#9E9E9E] hover:text-[#333] transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M2 2l12 12M14 2 2 14" />
+              </svg>
+            </button>
+            <h2 className="text-[22px] font-bold text-center text-[#222] mb-7">담당치료사 변경</h2>
+            <p className="text-[15px] text-center text-[#333] mb-10">
+              <span className="font-bold">{childName}</span> 아동의 담당 치료사를{' '}
+              <span className="font-bold">{pending.name}</span>으로 변경하시겠습니까?
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={handleConfirm}
+                disabled={assigning}
+                className="w-[160px] h-[52px] bg-[#005744] text-white text-[16px] font-medium rounded-[5px] hover:bg-[#005744]/90 disabled:opacity-50 transition-colors"
+              >
+                변경하기
+              </button>
+              <button
+                onClick={() => setPending(null)}
+                className="w-[120px] h-[52px] border border-[#005744] text-[#005744] text-[16px] font-medium rounded-[5px] hover:bg-[#005744]/5 transition-colors"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -601,45 +707,190 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
 /* ---------------------------------- */
 /* 치료 이력                           */
 /* ---------------------------------- */
-function parseTreatedAt(s: string): Date {
-  // treated_at 은 'YYYY.MM.DD' 또는 'YYYY.MM.DD HH:MM' 형식 — 날짜 부분만 사용
-  const [y, m, d] = s.split(' ')[0].split('.').map(Number)
-  return new Date(y, m - 1, d)
+
+
+/* ---------------------------------- */
+/* 치료 이력 차트 컴포넌트              */
+/* ---------------------------------- */
+type CDSeriesKey = 'accuracy' | 'tries' | 'minutes'
+type CDWeeklyPoint = { day: string; accuracy: number; tries: number; minutes: number }
+type CDCalEntry = { acc: number[]; tries: number; minutes: number }
+
+const CD_SERIES: { key: CDSeriesKey; label: string; color: string }[] = [
+  { key: 'accuracy', label: '정확도(%)',       color: '#FF6767' },
+  { key: 'tries',    label: '발음 횟수 (회)', color: '#FF9873' },
+  { key: 'minutes',  label: '훈련시간 (분)',  color: '#5EBC93' },
+]
+
+function CDSeriesToggle({
+  label, color, checked, onChange
+}: { label: string; color: string; checked: boolean; onChange: () => void }) {
+  return (
+    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+      <button
+        type="button"
+        onClick={onChange}
+        className={`w-5 h-5 rounded-[3px] grid place-items-center transition-colors ${
+          checked ? 'bg-brand' : 'bg-white border border-[#B2B2B2]'
+        }`}
+        role="checkbox"
+        aria-checked={checked}
+      >
+        {checked && (
+          <svg width="12" height="10" viewBox="0 0 12 10" fill="none" stroke="white" strokeWidth="2">
+            <path d="M1 5l3.5 3.5L11 1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+      <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+      <span className="text-[14px] text-ink-900">{label}</span>
+    </label>
+  )
 }
 
-function buildChartData(
-  treatments: TreatmentListItem[],
-  period: 'week' | 'month' | '3month'
-) {
-  const cutoffDays = period === 'week' ? 7 : period === 'month' ? 30 : 90
-  const cutoff = new Date()
-  cutoff.setDate(cutoff.getDate() - cutoffDays)
-  cutoff.setHours(0, 0, 0, 0)
+function CDMonthCalendar({
+  year, month, data, visible
+}: {
+  year: number
+  month: number
+  data: Map<number, CDCalEntry>
+  visible: Record<CDSeriesKey, boolean>
+}) {
+  const DAYS = ['월', '화', '수', '목', '금', '토', '일']
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const rawDow = new Date(year, month - 1, 1).getDay()
+  const offset = rawDow === 0 ? 6 : rawDow - 1
 
-  const filtered = treatments
-    .filter(t => t.treated_at && parseTreatedAt(t.treated_at) >= cutoff)
-    .slice(-7)
+  const CALSERIES = [
+    { key: 'accuracy' as CDSeriesKey, color: '#FF4646', fmt: (e: CDCalEntry) => e.acc.length ? `${Math.round(e.acc.reduce((a, v) => a + v) / e.acc.length)}%` : null },
+    { key: 'tries'    as CDSeriesKey, color: '#FF9873', fmt: (e: CDCalEntry) => e.tries   > 0 ? `${e.tries}회`   : null },
+    { key: 'minutes'  as CDSeriesKey, color: '#5EBC93', fmt: (e: CDCalEntry) => e.minutes > 0 ? `${e.minutes}분` : null },
+  ]
 
-  const labels = [...filtered].reverse().map(t => {
-    const parts = t.treated_at.split(' ')[0].split('.')
-    return parts.length >= 3 ? `${Number(parts[1])}/${Number(parts[2])}` : t.treated_at
-  })
-  const rev = [...filtered].reverse()
+  const cells: (number | null)[] = [
+    ...Array(offset).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1)
+  ]
 
-  const accuracyVals = rev.map(t => t.avg_accuracy_pct ?? 0)
-  const tryVals      = rev.map(t => t.try_count      ?? 0)
-  const durationVals = rev.map(t => t.duration_minutes ?? 0)
+  return (
+    <div>
+      <div className="grid grid-cols-7 border-b border-[#E8E8E8] mb-0">
+        {DAYS.map(d => (
+          <div key={d} className="text-[15px] font-semibold text-center text-ink-900 py-3">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 border-l border-t border-[#E8E8E8]">
+        {cells.map((day, idx) => {
+          const entry = day !== null ? data.get(day) ?? null : null
+          return (
+            <div key={idx} className="border-r border-b border-[#E8E8E8] min-h-[76px] p-2">
+              {day !== null && (
+                <>
+                  <div className="text-[10px] text-[#C0C0C0] leading-none mb-1.5">{day}</div>
+                  {CALSERIES.map(({ key, color, fmt }) => {
+                    if (!visible[key]) return null
+                    const label = entry ? fmt(entry) : null
+                    let activeColor = color
+                    if (key === 'accuracy' && entry && entry.acc.length > 0) {
+                      const avg = entry.acc.reduce((a, v) => a + v) / entry.acc.length
+                      if (avg < 70) activeColor = '#B2B2B2'
+                    }
+                    return (
+                      <div key={key} className="flex items-center gap-1.5 mb-[3px]">
+                        <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+                          style={{ backgroundColor: label ? activeColor : '#D0D0D0' }} />
+                        {label
+                          ? <span className="text-[11px] font-semibold leading-none" style={{ color: activeColor }}>{label}</span>
+                          : <span className="text-[11px] text-[#C8C8C8] leading-none">-</span>
+                        }
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
-  const periodLabel = period === 'week' ? '이번주' : period === 'month' ? '이번달' : '최근 3개월'
-  const avgAcc   = accuracyVals.length ? Math.round(accuracyVals.reduce((a, b) => a + b, 0) / accuracyVals.length) : 0
-  const totalTry = tryVals.reduce((a, b) => a + b, 0)
-  const totalMin = durationVals.reduce((a, b) => a + b, 0)
+function CDWeeklyBarChart({
+  data,
+  visible,
+  showSeriesLabels = false
+}: {
+  data: CDWeeklyPoint[]
+  visible: Record<CDSeriesKey, boolean>
+  showSeriesLabels?: boolean
+}) {
+  const allValues = data.flatMap(d => [d.accuracy, d.tries, d.minutes])
+  const max = Math.max(...allValues, 100)
+  const colMinW = data.length <= 7 ? undefined : Math.max(48, Math.floor(660 / data.length))
 
-  return {
-    accuracy:  { labels, values: accuracyVals, maxValue: 100,                              stat: `${periodLabel} 평균 발음 정확도는 ${avgAcc}%에요.` },
-    tryCount:  { labels, values: tryVals,       maxValue: Math.max(...tryVals,      1),    stat: `${periodLabel} 총 ${totalTry}회 발음했어요.` },
-    duration:  { labels, values: durationVals,  maxValue: Math.max(...durationVals, 1),    stat: `${periodLabel} 총 ${totalMin}분을 연습했어요.` }
-  }
+  return (
+    <div className="relative">
+      <div className="absolute top-0 left-0 right-0 flex items-center pointer-events-none">
+        <div className="flex-1 border-t border-dashed border-line-dash" />
+        <span className="text-[12px] text-[#B2B2B2] ml-2">목표</span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <div
+          className="h-[280px] pt-6"
+          style={
+            colMinW
+              ? { display: 'grid', gridTemplateColumns: `repeat(${data.length}, ${colMinW}px)`, gap: '0.5rem' }
+              : { display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, data.length)}, 1fr)`, gap: '1rem' }
+          }
+        >
+          {data.map((d, idx) => (
+            <div key={idx} className="flex flex-col items-center">
+              <div className="flex-1 flex items-end justify-center gap-1 w-full">
+                {(['accuracy', 'tries', 'minutes'] as CDSeriesKey[]).map(key => {
+                  if (!visible[key]) return null
+                  const value = d[key]
+                  const heightPct = max > 0 ? (value / max) * 100 : 0
+                  const color =
+                    key === 'accuracy' ? '#FF6767' : key === 'tries' ? '#FF9873' : '#5EBC93'
+                  return (
+                    <div
+                      key={key}
+                      className="flex flex-col items-center justify-end h-full"
+                      style={{ width: 24 }}
+                    >
+                      <div className="text-[12px] text-ink-700 mb-1 leading-none">{value || ''}</div>
+                      <div
+                        className="w-full rounded-sm"
+                        style={{
+                          backgroundColor: value > 0 ? color : '#EAEAEA',
+                          height: `${Math.max(2, heightPct)}%`,
+                          minHeight: 4
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              {showSeriesLabels && (
+                <div className="flex justify-center gap-1 mt-1">
+                  {(['accuracy', 'tries', 'minutes'] as CDSeriesKey[]).map(key =>
+                    visible[key] ? (
+                      <div key={key} className="text-[11px] text-ink-400 leading-none" style={{ width: 24, textAlign: 'center' }}>
+                        {key === 'accuracy' ? 'P' : key === 'tries' ? 'F' : 'T'}
+                      </div>
+                    ) : null
+                  )}
+                </div>
+              )}
+              <div className="text-[13px] font-semibold text-ink-900 mt-1">{d.day}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function TreatmentSection({ childId, treatments }: { childId: number; treatments: TreatmentListItem[] }) {
@@ -647,21 +898,114 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
   const [period, setPeriod] = useState<'week' | 'month' | '3month'>('week')
   const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
 
-  const chartData = useMemo(() => buildChartData(treatments, period), [treatments, period])
+  const [visible, setVisible] = useState<Record<CDSeriesKey, boolean>>({
+    accuracy: true, tries: true, minutes: true
+  })
+
+  const { calYear, calMonth } = useMemo(() => {
+    if (treatments.length === 0) {
+      const n = new Date()
+      return { calYear: n.getFullYear(), calMonth: n.getMonth() + 1 }
+    }
+    const sorted = [...treatments].sort((a, b) => (b.treated_at ?? '').localeCompare(a.treated_at ?? ''))
+    const p = sorted[0].treated_at?.split(' ')[0].split('.').map(Number) ?? []
+    if (p.length >= 3) return { calYear: p[0], calMonth: p[1] }
+    const n = new Date()
+    return { calYear: n.getFullYear(), calMonth: n.getMonth() + 1 }
+  }, [treatments])
+
+  const calendarMap = useMemo(() => {
+    if (period !== 'month') return new Map<number, CDCalEntry>()
+    const map = new Map<number, CDCalEntry>()
+    for (const t of treatments) {
+      if (!t.treated_at) continue
+      const p = t.treated_at.split(' ')[0].split('.').map(Number)
+      if (p.length < 3 || p[0] !== calYear || p[1] !== calMonth) continue
+      if (!map.has(p[2])) map.set(p[2], { acc: [], tries: 0, minutes: 0 })
+      const b = map.get(p[2])!
+      if (t.avg_accuracy_pct != null) b.acc.push(t.avg_accuracy_pct)
+      b.tries += t.try_count ?? 0
+      b.minutes += t.duration_minutes ?? 0
+    }
+    return map
+  }, [period, treatments, calYear, calMonth])
+
+  const weeklyData = useMemo((): CDWeeklyPoint[] => {
+    const now = new Date()
+    const dow = now.getDay()
+    const mondayOffset = dow === 0 ? -6 : 1 - dow
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset)
+    monday.setHours(0, 0, 0, 0)
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+    sunday.setHours(23, 59, 59, 999)
+    const DAYS = ['월', '화', '수', '목', '금', '토', '일']
+    const buckets = DAYS.map(() => ({ acc: [] as number[], tries: 0, minutes: 0 }))
+    for (const t of treatments) {
+      if (!t.treated_at) continue
+      const p = t.treated_at.split(' ')[0].split('.').map(Number)
+      if (p.length < 3) continue
+      const date = new Date(p[0], p[1] - 1, p[2])
+      if (date < monday || date > sunday) continue
+      const d = date.getDay()
+      const idx = d === 0 ? 6 : d - 1
+      if (t.avg_accuracy_pct != null) buckets[idx].acc.push(t.avg_accuracy_pct)
+      buckets[idx].tries += t.try_count ?? 0
+      buckets[idx].minutes += t.duration_minutes ?? 0
+    }
+    return DAYS.map((day, idx) => ({
+      day,
+      accuracy: buckets[idx].acc.length ? Math.round(buckets[idx].acc.reduce((a, v) => a + v) / buckets[idx].acc.length) : 0,
+      tries: buckets[idx].tries,
+      minutes: buckets[idx].minutes
+    }))
+  }, [treatments])
+
+  const monthlyData = useMemo((): CDWeeklyPoint[] => {
+    if (period !== '3month') return []
+    const now = new Date()
+    const slots: { ym: string; label: string }[] = []
+    for (let i = 2; i >= 0; i--) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      slots.push({ ym: `${m.getFullYear()}-${m.getMonth() + 1}`, label: `${m.getMonth() + 1}월` })
+    }
+    const mbuckets = new Map<string, { label: string; acc: number[]; tries: number; minutes: number }>()
+    for (const { ym, label } of slots) mbuckets.set(ym, { label, acc: [], tries: 0, minutes: 0 })
+    for (const t of treatments) {
+      if (!t.treated_at) continue
+      const p = t.treated_at.split(' ')[0].split('.').map(Number)
+      if (p.length < 3) continue
+      const ym = `${p[0]}-${p[1]}`
+      if (!mbuckets.has(ym)) continue
+      const b = mbuckets.get(ym)!
+      if (t.avg_accuracy_pct != null) b.acc.push(t.avg_accuracy_pct)
+      b.tries += t.try_count ?? 0
+      b.minutes += t.duration_minutes ?? 0
+    }
+    return [...mbuckets.values()].map(b => ({
+      day: b.label,
+      accuracy: b.acc.length ? Math.round(b.acc.reduce((a, v) => a + v) / b.acc.length) : 0,
+      tries: b.tries,
+      minutes: b.minutes
+    }))
+  }, [period, treatments])
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="text-[18px] font-semibold text-ink-900">치료 이력</h2>
-        <div className="flex items-center gap-4 text-[15px]">
+      <h2 className="text-[18px] font-semibold text-ink-900 mb-4">치료 이력</h2>
+
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div className="inline-flex bg-line-soft p-1 rounded-[8px]">
           {(['week', 'month', '3month'] as const).map((p) => {
             const label = p === 'week' ? '주간' : p === 'month' ? '월간' : '3개월'
+            const active = period === p
             return (
               <button
                 key={p}
+                type="button"
                 onClick={() => setPeriod(p)}
-                className={`pb-1 border-b-2 ${
-                  period === p ? 'border-brand text-brand font-semibold' : 'border-transparent text-ink-500'
+                className={`h-[34px] px-6 rounded-[5px] text-[15px] font-medium transition-colors ${
+                  active ? 'bg-white border border-brand text-ink-900' : 'text-ink-700 hover:text-ink-900'
                 }`}
               >
                 {label}
@@ -669,18 +1013,24 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
             )
           })}
         </div>
+
+        <div className="flex items-center gap-5">
+          {CD_SERIES.map(({ key, label, color }) => (
+            <CDSeriesToggle
+              key={key}
+              label={label}
+              color={color}
+              checked={visible[key]}
+              onChange={() => setVisible(v => ({ ...v, [key]: !v[key] }))}
+            />
+          ))}
+        </div>
       </div>
 
-      <div className="flex items-center gap-6 mb-4 text-[14px] text-ink-850">
-        <LegendDot color="bg-chart-green" label="P (성공)" />
-        <LegendDot color="bg-chart-orange" label="F (실패)" />
-        <LegendDot color="bg-chart-red" label="T (시도)" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <ChartCard title="정확도 (%)"   data={chartData.accuracy} />
-        <ChartCard title="발음 횟수 (회)" data={chartData.tryCount} />
-        <ChartCard title="훈련시간 (분)" data={chartData.duration} />
+      <div className="mb-6">
+        {period === 'week' && <CDWeeklyBarChart data={weeklyData} visible={visible} />}
+        {period === 'month' && <CDMonthCalendar year={calYear} month={calMonth} data={calendarMap} visible={visible} />}
+        {period === '3month' && <CDWeeklyBarChart data={monthlyData} visible={visible} showSeriesLabels />}
       </div>
 
       <DateRangeFilter range={range} onChange={setRange} />
@@ -871,14 +1221,6 @@ function OutlineButton({ children }: { children: React.ReactNode }) {
   )
 }
 
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className={`w-3 h-3 rounded-full ${color}`} />
-      {label}
-    </span>
-  )
-}
 
 function Tag({ label }: { label: string }) {
   const colors: Record<string, string> = {
@@ -891,43 +1233,6 @@ function Tag({ label }: { label: string }) {
   return <span className={`inline-block px-2 py-0.5 rounded-[10px] text-[12px] ${cls}`}>{label}</span>
 }
 
-type ChartCardData = { labels: string[]; values: number[]; maxValue: number; stat: string }
-
-function ChartCard({ title, data }: { title: string; data: ChartCardData }) {
-  const { labels, values, maxValue, stat } = data
-  return (
-    <div className="bg-surface-card border border-line rounded-[5px] p-4">
-      <div className="text-[14px] font-medium text-ink-850 mb-3">{title}</div>
-      <div className="h-[140px] flex items-end gap-3 border-b border-dashed border-line-dash relative">
-        <span className="absolute top-0 right-0 text-[10px] text-ink-300">목표</span>
-        {labels.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-[12px] text-ink-400 pb-4">데이터 없음</div>
-        ) : labels.map((label, i) => {
-          const pct = maxValue > 0 ? Math.round((values[i] / maxValue) * 100) : 0
-          return (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <div className="w-full flex items-end justify-center gap-0.5" style={{ height: '120px' }}>
-                <span className="w-2 bg-chart-green  rounded-sm" style={{ height: `${pct}%` }} />
-                <span className="w-2 bg-chart-orange rounded-sm" style={{ height: `${pct > 0 ? Math.max(8, pct - 20) : 0}%` }} />
-                <span className="w-2 bg-chart-red    rounded-sm" style={{ height: `${pct > 0 ? Math.max(15, pct - 10) : 0}%` }} />
-              </div>
-              <span className="text-[11px] text-ink-500 truncate max-w-full">{label}</span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-3 text-[13px] text-ink-700">
-        {stat.split(/(\d+%?|\d+회|\d+분)/g).map((part, i) =>
-          /\d/.test(part) ? (
-            <span key={i} className="text-accent-highlight font-semibold">{part}</span>
-          ) : (
-            <span key={i}>{part}</span>
-          )
-        )}
-      </div>
-    </div>
-  )
-}
 
 function SmallPagination({ pages = [1] }: { pages?: number[] }) {
   if (pages.length <= 1) {

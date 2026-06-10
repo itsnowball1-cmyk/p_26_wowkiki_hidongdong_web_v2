@@ -366,6 +366,7 @@ export type DashboardDto = {
     current_sound: string | null
     days_since_trained: number | null
     needs_custom_change: boolean
+    latest_training_acc: number | null
   }[]
 }
 

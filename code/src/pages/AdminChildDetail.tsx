@@ -133,11 +133,13 @@ function Calendar({ childId, childName }: { childId: number; childName: string }
 function AssignModal({
   type,
   childId,
+  childName,
   onClose,
   onAssigned,
 }: {
   type: 'doctor' | 'therapist'
   childId: number
+  childName: string
   onClose: () => void
   onAssigned: (staff: AdminStaffItem) => void
 }) {
@@ -146,6 +148,7 @@ function AssignModal({
   const [results, setResults] = useState<AdminStaffItem[]>([])
   const [loading, setLoading] = useState(false)
   const [assigning, setAssigning] = useState(false)
+  const [pending, setPending] = useState<AdminStaffItem | null>(null)
 
   useEffect(() => {
     if (!query.trim()) {
@@ -159,15 +162,15 @@ function AssignModal({
       .finally(() => setLoading(false))
   }, [query, type])
 
-  const handleSelect = async (staff: AdminStaffItem) => {
-    if (assigning) return
+  const handleConfirm = async () => {
+    if (!pending || assigning) return
     setAssigning(true)
     try {
       const body = isDoctor
-        ? { doctor_code: staff.code }
-        : { teacher_code: staff.code }
+        ? { doctor_code: pending.code }
+        : { teacher_code: pending.code }
       await api.adminAssignChild(childId, body)
-      onAssigned(staff)
+      onAssigned(pending)
       onClose()
     } finally {
       setAssigning(false)
@@ -233,7 +236,7 @@ function AssignModal({
           {!loading && results.map(staff => (
             <div
               key={staff.code}
-              onClick={() => handleSelect(staff)}
+              onClick={() => setPending(staff)}
               className="h-[71px] flex flex-col justify-center cursor-pointer hover:bg-[#F5F5F5] -mx-[37px] px-[37px] transition-colors"
             >
               <div className="text-[15px] text-[#AEAEAE] tracking-[-0.03em]">
@@ -245,6 +248,35 @@ function AssignModal({
             </div>
           ))}
         </div>
+
+        {/* 확인 팝업 */}
+        {pending && (
+          <div className="absolute inset-0 z-[60] bg-black/40 flex items-center justify-center">
+            <div className="bg-white rounded-[12px] px-8 py-8 w-[340px] flex flex-col items-center gap-6" onClick={e => e.stopPropagation()}>
+              <p className="text-[15px] text-center leading-relaxed text-ink-900">
+                <span className="font-bold">{childName}</span> 아동의 담당 {isDoctor ? '의사' : '치료사'}를{' '}
+                <span className="font-bold">{pending.name}</span>으로 변경하시겠습니까?
+              </p>
+              <div className="flex gap-3 w-full">
+                <button
+                  type="button"
+                  onClick={() => setPending(null)}
+                  className="flex-1 h-[44px] rounded-[8px] border border-line-soft text-[15px] font-medium text-ink-700 hover:bg-surface-active transition-colors"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirm}
+                  disabled={assigning}
+                  className="flex-1 h-[44px] rounded-[8px] bg-brand text-white text-[15px] font-medium hover:bg-brand/90 disabled:opacity-50 transition-colors"
+                >
+                  변경하기
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -434,6 +466,7 @@ export default function AdminChildDetail({ id, memberId }: { id: number; memberI
         <AssignModal
           type={assignModal}
           childId={id}
+          childName={child?.name ?? ''}
           onClose={() => setAssignModal(null)}
           onAssigned={staff => handleAssigned(assignModal, staff)}
         />

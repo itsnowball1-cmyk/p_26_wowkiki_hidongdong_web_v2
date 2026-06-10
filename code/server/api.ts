@@ -2801,6 +2801,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           current_sound:       latestP.trained_sound ?? null,
           days_since_trained:  r.days_since_trained ?? null,
           needs_custom_change,
+          latest_training_acc: latestAcc,
         }
       })
 

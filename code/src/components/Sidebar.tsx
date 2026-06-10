@@ -11,6 +11,10 @@ type P = SVGProps<SVGSVGElement>
 type IconComp = (p: P) => JSX.Element
 type MenuKey = 'dashboard' | 'children' | 'schedule' | 'custom' | 'mypage'
 
+const MIN_SIDEBAR_W = 180
+const MAX_SIDEBAR_W = 360
+const DEFAULT_SIDEBAR_W = 240
+
 const items: { key: MenuKey; label: string; icon: IconComp }[] = [
   { key: 'dashboard', label: '대시보드',      icon: IconDashboard },
   { key: 'children',  label: '아동관리',       icon: IconChild     },
@@ -21,6 +25,33 @@ const items: { key: MenuKey; label: string; icon: IconComp }[] = [
 
 export default function Sidebar() {
   const { route, go } = useRouter()
+  const [sidebarW, setSidebarW] = useState(() => {
+    const saved = localStorage.getItem('sidebar_width')
+    return saved ? Math.min(MAX_SIDEBAR_W, Math.max(MIN_SIDEBAR_W, Number(saved))) : DEFAULT_SIDEBAR_W
+  })
+
+  const onDragStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = sidebarW
+    let latestW = startW
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMove = (ev: MouseEvent) => {
+      latestW = Math.min(MAX_SIDEBAR_W, Math.max(MIN_SIDEBAR_W, startW + ev.clientX - startX))
+      setSidebarW(latestW)
+    }
+    const onUp = () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem('sidebar_width', String(latestW))
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   const isOnNotice  = route.name === 'notice-list'  || route.name === 'notice-detail'
   const isOnFaq     = route.name === 'faq-list'     || route.name === 'faq-detail'
@@ -50,7 +81,15 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="hidden md:flex md:w-[240px] lg:w-[240px] shrink-0 flex-col bg-surface-card shadow-sidebar sticky top-0 h-screen overflow-y-auto">
+    <aside
+      className="hidden md:flex shrink-0 flex-col bg-surface-card shadow-sidebar sticky top-0 h-screen overflow-y-auto relative"
+      style={{ width: sidebarW }}
+    >
+      {/* 사이드바 우측 드래그 리사이즈 핸들 */}
+      <div
+        onMouseDown={onDragStart}
+        className="absolute top-0 right-0 h-full w-[5px] cursor-col-resize z-10 hover:bg-brand/20 transition-colors"
+      />
       <div className="h-[64px] flex items-center px-5">
         <BrandLogo size="sm" />
       </div>

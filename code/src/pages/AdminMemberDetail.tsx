@@ -78,6 +78,7 @@ function DoctorChangeModal({
   const [doctor, setDoctor] = useState<AdminStaffItem | null>(null)
   const [showSearch, setShowSearch] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
 
   const handleSave = async () => {
     if (!doctor) return
@@ -91,6 +92,10 @@ function DoctorChangeModal({
     }
   }
 
+  const childrenLabel = selectedChildren.length === 1
+    ? selectedChildren[0].name
+    : `${selectedChildren[0].name} 외 ${selectedChildren.length - 1}명`
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
       {showSearch ? (
@@ -99,7 +104,7 @@ function DoctorChangeModal({
           onClose={() => setShowSearch(false)}
         />
       ) : (
-        <div className="w-[520px] bg-white rounded-[5px]">
+        <div className="relative w-[520px] bg-white rounded-[5px]">
 
           {/* 제목 + X */}
           <div className="flex items-center justify-between px-[42px] pt-[42px]">
@@ -162,7 +167,7 @@ function DoctorChangeModal({
           <div className="flex gap-[19px] justify-center mt-[44px] pb-[42px]">
             <button
               type="button"
-              onClick={handleSave}
+              onClick={() => setShowConfirm(true)}
               disabled={!doctor || saving}
               className={`w-[125px] h-[40px] text-white text-[15px] font-medium rounded-[5px] transition-colors ${
                 doctor && !saving ? 'bg-[#005744] hover:bg-[#005744]/90' : 'bg-[#C0C0C0] cursor-not-allowed'
@@ -179,6 +184,35 @@ function DoctorChangeModal({
               취소
             </button>
           </div>
+
+          {/* 확인 팝업 */}
+          {showConfirm && doctor && (
+            <div className="absolute inset-0 z-[60] bg-black/40 flex items-center justify-center rounded-[5px]">
+              <div className="bg-white rounded-[12px] px-8 py-8 w-[340px] flex flex-col items-center gap-6" onClick={e => e.stopPropagation()}>
+                <p className="text-[15px] text-center leading-relaxed text-ink-900">
+                  <span className="font-bold">{childrenLabel}</span> 아동의 담당 의사를{' '}
+                  <span className="font-bold">{doctor.name}</span>으로 변경하시겠습니까?
+                </p>
+                <div className="flex gap-3 w-full">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirm(false)}
+                    className="flex-1 h-[44px] rounded-[8px] border border-[#DEDEDE] text-[15px] font-medium text-[#707070] hover:bg-[#F5F5F5] transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="flex-1 h-[44px] rounded-[8px] bg-[#005744] text-white text-[15px] font-medium hover:bg-[#005744]/90 disabled:opacity-50 transition-colors"
+                  >
+                    변경하기
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       )}

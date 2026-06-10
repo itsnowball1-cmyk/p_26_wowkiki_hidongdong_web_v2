@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
 import { api, type DashboardDto } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { useRouter } from '../lib/router'
 
 type Child = DashboardDto['children'][number]
@@ -86,8 +87,8 @@ function daysSince(dateStr: string | null): number | null {
   return Math.floor((todayMs - diagMs) / 86400000)
 }
 
-function DiagnosisCell({ child }: { child: Child }) {
-  const needsRediag = (daysSince(child.diagnosis_date) ?? 0) >= 14
+function DiagnosisCell({ child, isClinical }: { child: Child; isClinical: boolean }) {
+  const needsRediag = isClinical && (daysSince(child.diagnosis_date) ?? 0) >= 14
   return (
     <div className="flex items-center justify-center gap-1.5 flex-wrap">
       <span className="text-[#484848]">{child.diagnosis_date ?? '-'}</span>
@@ -96,7 +97,7 @@ function DiagnosisCell({ child }: { child: Child }) {
   )
 }
 
-function CustomStatus({ child }: { child: Child }) {
+function CustomStatus({ child, customAcked }: { child: Child; customAcked: boolean }) {
   const days = child.days_since_trained
   const text = child.current_sound
     ? `${child.current_sound}${days != null ? ` (${days}일 경과)` : ''}`
@@ -104,7 +105,7 @@ function CustomStatus({ child }: { child: Child }) {
   return (
     <div className="flex items-center justify-center gap-1.5 flex-wrap">
       <span className="text-[#484848] text-[13px]">{text ?? '-'}</span>
-      {child.needs_custom_change && <StatusBadge>커스텀 변경 필요</StatusBadge>}
+      {child.needs_custom_change && !customAcked && <StatusBadge>커스텀 변경 필요</StatusBadge>}
     </div>
   )
 }
@@ -118,6 +119,8 @@ function Remark({ child }: { child: Child }) {
 
 export default function Dashboard() {
   const { go } = useRouter()
+  const { user } = useAuth()
+  const isClinical = user?.institutionCode === 'HBD' || user?.institutionCode === 'TEST'
   const [data, setData] = useState<DashboardDto | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -221,7 +224,18 @@ export default function Dashboard() {
                       </td>
                     </tr>
                   )}
-                  {!loading && children.map((c, i) => (
+                  {!loading && children.map((c, i) => {
+                    const _acked = localStorage.getItem(`hbd_custom_ack_${c.id}`)
+                    const customAcked = (() => {
+                      if (!_acked) return false
+                      const [ackedDiag, ackedAccStr] = _acked.split('|')
+                      const diagKey = c.diagnosis_date ?? String(c.id)
+                      if (ackedDiag !== diagKey) return false   // 새 진단 → 다시 표시
+                      const ackedAcc = ackedAccStr !== undefined && ackedAccStr !== '' ? Number(ackedAccStr) : null
+                      if (ackedAcc === null) return true
+                      return (c.latest_training_acc ?? 0) < ackedAcc + 5  // 5% 더 오르면 다시 표시
+                    })()
+                    return (
                     <tr
                       key={c.id}
                       className="h-[48px] hover:bg-[#FAFAFA] cursor-pointer transition-colors"
@@ -233,18 +247,19 @@ export default function Dashboard() {
                       </td>
                       <td className="text-center text-[#484848]">{c.identifier}</td>
                       <td className="text-center text-[#484848]">{c.birth_date ?? '-'}</td>
-                      <td className="text-center"><DiagnosisCell child={c} /></td>
+                      <td className="text-center"><DiagnosisCell child={c} isClinical={isClinical} /></td>
                       <td className="text-center">
                         <ProgressBar pct={c.today_accuracy ?? 0} />
                       </td>
                       <td className="text-center">
-                        <CustomStatus child={c} />
+                        <CustomStatus child={c} customAcked={customAcked} />
                       </td>
                       <td className="text-center">
                         <Remark child={c} />
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

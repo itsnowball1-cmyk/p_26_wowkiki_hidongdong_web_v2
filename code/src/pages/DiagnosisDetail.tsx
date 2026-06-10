@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '../components/Sidebar'
 import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
-import type { DiagnosisDetailDto } from '../lib/api'
+import type { DiagnosisDetailDto, DiagnosisListItem } from '../lib/api'
 import { exportDiagnosisToExcel, exportElementToPdf, type DiagnosisExportData } from '../lib/exporters'
 
 type Props = { childId: number; diagnosisId: number }
@@ -60,6 +60,22 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
       setExporting(null)
     }
   }
+
+  const [allDiagnoses, setAllDiagnoses] = useState<DiagnosisListItem[]>([])
+
+  useEffect(() => {
+    api.childDiagnoses(childId).then(setAllDiagnoses).catch(console.error)
+  }, [childId])
+
+  const { prevDiagnosisId, nextDiagnosisId } = useMemo(() => {
+    if (allDiagnoses.length === 0) return { prevDiagnosisId: null, nextDiagnosisId: null }
+    const idx = allDiagnoses.findIndex(d => d.id === diagnosisId)
+    if (idx === -1) return { prevDiagnosisId: null, nextDiagnosisId: null }
+    return {
+      prevDiagnosisId: idx + 1 < allDiagnoses.length ? allDiagnoses[idx + 1].id : null,
+      nextDiagnosisId: idx > 0 ? allDiagnoses[idx - 1].id : null
+    }
+  }, [allDiagnoses, diagnosisId])
 
   useEffect(() => {
     let cancelled = false
@@ -273,6 +289,35 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
               </section>
             )}
           </div>
+          </div>
+
+          {/* Pager */}
+          <div className="flex items-center justify-center gap-4 pt-4 pb-12">
+            <button
+              type="button"
+              disabled={prevDiagnosisId === null}
+              className={prevDiagnosisId !== null
+                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+              }
+              onClick={() => prevDiagnosisId !== null && go({ name: 'diagnosis', childId, diagnosisId: prevDiagnosisId })}
+            >
+              &lt; 이전
+            </button>
+            <span className="text-[18px] font-medium text-ink-900">
+              {diagData?.examined_at ?? '-'}
+            </span>
+            <button
+              type="button"
+              disabled={nextDiagnosisId === null}
+              className={nextDiagnosisId !== null
+                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+              }
+              onClick={() => nextDiagnosisId !== null && go({ name: 'diagnosis', childId, diagnosisId: nextDiagnosisId })}
+            >
+              다음 &gt;
+            </button>
           </div>
         </main>
       </div>

@@ -4,7 +4,7 @@ import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
 import { useAuth } from '../lib/auth'
-import { api, type TreatmentDetailDto, type RecordingItem } from '../lib/api'
+import { api, type TreatmentDetailDto, type RecordingItem, type TreatmentListItem } from '../lib/api'
 import {
   exportTreatmentToExcel,
   exportElementToPdf,
@@ -46,6 +46,13 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
   const [detail, setDetail] = useState<TreatmentDetailDto | null>(null)
   const [loading, setLoading] = useState(true)
   const [recordingGroups, setRecordingGroups] = useState<RecordingGroupData[]>([])
+  const [allTreatments, setAllTreatments] = useState<TreatmentListItem[]>([])
+
+  useEffect(() => {
+    api.childTreatments(childId)
+      .then(setAllTreatments)
+      .catch(console.error)
+  }, [childId])
 
   useEffect(() => {
     setLoading(true)
@@ -72,19 +79,107 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
 
   const weekly = detail?.weekly ?? EMPTY_WEEKLY
 
+  // 월간: 이번달 캘린더 데이터
+  const { calYear, calMonth } = useMemo(() => {
+    // 가장 최근 치료 기록의 연/월 기준
+    if (allTreatments.length > 0) {
+      const p = allTreatments[0].treated_at?.split(' ')[0].split('.').map(Number) ?? []
+      if (p.length >= 3) return { calYear: p[0], calMonth: p[1] }
+    }
+    const n = new Date()
+    return { calYear: n.getFullYear(), calMonth: n.getMonth() + 1 }
+  }, [allTreatments])
+
+  const calendarMap = useMemo(() => {
+    const map = new Map<number, { acc: number[]; tries: number; minutes: number }>()
+    if (range !== '월간') return map
+    for (const t of allTreatments) {
+      if (!t.treated_at) continue
+      const p = t.treated_at.split(' ')[0].split('.').map(Number)
+      if (p.length < 3 || p[0] !== calYear || p[1] !== calMonth) continue
+      if (!map.has(p[2])) map.set(p[2], { acc: [], tries: 0, minutes: 0 })
+      const b = map.get(p[2])!
+      if (t.avg_accuracy_pct != null) b.acc.push(t.avg_accuracy_pct)
+      b.tries   += t.try_count       ?? 0
+      b.minutes += t.duration_minutes ?? 0
+    }
+    return map
+  }, [range, allTreatments, calYear, calMonth])
+
+  // 3개월: 최근 3개월 월별 집계 막대 데이터
+  const periodData = useMemo((): WeeklyPoint[] => {
+    if (range !== '3개월') return []
+    const now = new Date()
+    const slots: { ym: string; label: string }[] = []
+    for (let i = 2; i >= 0; i--) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      slots.push({ ym: `${m.getFullYear()}-${m.getMonth() + 1}`, label: `${m.getMonth() + 1}월` })
+    }
+    const buckets = new Map<string, { label: string; acc: number[]; tries: number; minutes: number }>()
+    for (const { ym, label } of slots) buckets.set(ym, { label, acc: [], tries: 0, minutes: 0 })
+    for (const t of allTreatments) {
+      if (!t.treated_at) continue
+      const p = t.treated_at.split(' ')[0].split('.').map(Number)
+      if (p.length < 3) continue
+      const ym = `${p[0]}-${p[1]}`
+      if (!buckets.has(ym)) continue
+      const b = buckets.get(ym)!
+      if (t.avg_accuracy_pct != null) b.acc.push(t.avg_accuracy_pct)
+      b.tries   += t.try_count       ?? 0
+      b.minutes += t.duration_minutes ?? 0
+    }
+    return [...buckets.values()].map(b => ({
+      day:      b.label,
+      accuracy: b.acc.length ? Math.round(b.acc.reduce((a, v) => a + v) / b.acc.length) : 0,
+      tries:    b.tries,
+      minutes:  b.minutes
+    }))
+  }, [range, allTreatments])
+
+  const activeData = useMemo(
+    () => (range === '주간' ? weekly : periodData),
+    [range, weekly, periodData]
+  )
+
   const summary = useMemo(() => {
-    const totalMins = weekly.reduce((s, d) => s + d.minutes, 0)
-    const totalTries = weekly.reduce((s, d) => s + d.tries, 0)
-    const activeDays = weekly.filter(d => d.accuracy > 0)
+    if (range === '월간') {
+      let totalTries = 0, totalMins = 0
+      const accs: number[] = []
+      for (const { acc, tries, minutes } of calendarMap.values()) {
+        accs.push(...acc)
+        totalTries += tries
+        totalMins  += minutes
+      }
+      const avgAcc = accs.length ? Math.round(accs.reduce((a, v) => a + v) / accs.length) : 0
+      return [
+        { template: '이번달 총 ', value: String(totalMins), suffix: ' 분을 연습했어요.' },
+        { template: '이번달 총 ', value: String(totalTries), suffix: ' 회 발음했어요.' },
+        { template: '이번달 평균 발음 정확도는 ', value: `${avgAcc}%`, suffix: '에요.' }
+      ]
+    }
+    const totalMins = activeData.reduce((s, d) => s + d.minutes, 0)
+    const totalTries = activeData.reduce((s, d) => s + d.tries, 0)
+    const activeDays = activeData.filter(d => d.accuracy > 0)
     const avgAcc = activeDays.length > 0
       ? Math.round(activeDays.reduce((s, d) => s + d.accuracy, 0) / activeDays.length)
       : 0
+    const label = range === '주간' ? '이번주' : '3개월 간'
     return [
-      { template: '이번주 총 ', value: String(totalMins), suffix: ' 분을 연습했어요.' },
-      { template: '이번주 총 ', value: String(totalTries), suffix: ' 회 발음했어요.' },
-      { template: '이번주 평균 발음 정확도는 ', value: `${avgAcc}%`, suffix: '에요.' }
+      { template: `${label} 총 `, value: String(totalMins), suffix: ' 분을 연습했어요.' },
+      { template: `${label} 총 `, value: String(totalTries), suffix: ' 회 발음했어요.' },
+      { template: `${label} 평균 발음 정확도는 `, value: `${avgAcc}%`, suffix: '에요.' }
     ]
-  }, [weekly])
+  }, [range, activeData, calendarMap])
+
+  const { prevTreatmentId, nextTreatmentId } = useMemo(() => {
+    if (allTreatments.length === 0) return { prevTreatmentId: null, nextTreatmentId: null }
+    const idx = allTreatments.findIndex(t => t.id === treatmentId)
+    if (idx === -1) return { prevTreatmentId: null, nextTreatmentId: null }
+    return {
+      prevTreatmentId: idx + 1 < allTreatments.length ? allTreatments[idx + 1].id : null,
+      nextTreatmentId: idx > 0 ? allTreatments[idx - 1].id : null
+    }
+  }, [allTreatments, treatmentId])
 
   const buildExport = (): TreatmentExportData => ({
     identifier: detail?.identifier ?? '',
@@ -323,41 +418,6 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
               ) : <EmptyState />}
             </section>
 
-            {/* 치료 이력 chart */}
-            <section>
-              <SectionTitle>치료 이력</SectionTitle>
-              <div className="bg-surface-card border border-line rounded-[10px] p-6">
-                <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-                  <RangeTabs value={range} onChange={setRange} />
-                  <div className="flex items-center gap-5">
-                    {SERIES.map(s => (
-                      <SeriesToggle
-                        key={s.key}
-                        label={s.label}
-                        color={s.color}
-                        checked={visible[s.key]}
-                        onChange={() => toggleSeries(s.key)}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <WeeklyBarChart data={weekly} visible={visible} />
-
-                <div className="mt-6 space-y-2">
-                  {summary.map((s, i) => (
-                    <div key={i} className="flex items-center gap-2 text-[14px] text-ink-700">
-                      <span className="inline-block w-3 h-3 rounded-sm bg-[#666666]" />
-                      <span>
-                        {s.template}
-                        <span className="text-[#FD8D65] font-semibold">{s.value}</span>
-                        {s.suffix}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
 
             {/* 치료녹음 듣기 — 녹음이 있을 때만 노출. PDF 에는 제외 */}
             {recordingGroups.length > 0 && (
@@ -376,8 +436,12 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
           <div className="flex items-center justify-center gap-4 pt-4 pb-12">
             <button
               type="button"
-              className="h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors"
-              onClick={() => go({ name: 'treatment', childId, treatmentId: Math.max(1, treatmentId - 1) })}
+              disabled={prevTreatmentId === null}
+              className={prevTreatmentId !== null
+                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+              }
+              onClick={() => prevTreatmentId !== null && go({ name: 'treatment', childId, treatmentId: prevTreatmentId })}
             >
               &lt; 이전
             </button>
@@ -386,8 +450,12 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
             </span>
             <button
               type="button"
-              disabled
-              className="h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed"
+              disabled={nextTreatmentId === null}
+              className={nextTreatmentId !== null
+                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+              }
+              onClick={() => nextTreatmentId !== null && go({ name: 'treatment', childId, treatmentId: nextTreatmentId })}
             >
               다음 &gt;
             </button>
@@ -641,15 +709,90 @@ function SeriesToggle({
 
 type WeeklyPoint = { day: string; accuracy: number; tries: number; minutes: number }
 
+/* ----- 월별 캘린더 dot-chart ----- */
+type CalEntry = { acc: number[]; tries: number; minutes: number }
+
+function MonthCalendar({
+  year, month, data, visible
+}: {
+  year: number
+  month: number
+  data: Map<number, CalEntry>
+  visible: Record<SeriesKey, boolean>
+}) {
+  const DAYS = ['월', '화', '수', '목', '금', '토', '일']
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const rawDow = new Date(year, month - 1, 1).getDay() // 0=Sun
+  const offset = rawDow === 0 ? 6 : rawDow - 1        // Mon-start offset
+
+  const SERIES = [
+    { key: 'accuracy' as SeriesKey, color: '#FF4646', fmt: (e: CalEntry) => e.acc.length ? `${Math.round(e.acc.reduce((a, v) => a + v) / e.acc.length)}%` : null },
+    { key: 'tries'    as SeriesKey, color: '#FF9873', fmt: (e: CalEntry) => e.tries   > 0 ? `${e.tries}회`   : null },
+    { key: 'minutes'  as SeriesKey, color: '#5EBC93', fmt: (e: CalEntry) => e.minutes > 0 ? `${e.minutes}분` : null },
+  ]
+
+  const cells: (number | null)[] = [
+    ...Array(offset).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1)
+  ]
+
+  return (
+    <div>
+      <div className="grid grid-cols-7 border-b border-[#E8E8E8] mb-0">
+        {DAYS.map(d => (
+          <div key={d} className="text-[15px] font-semibold text-center text-ink-900 py-3">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 border-l border-t border-[#E8E8E8]">
+        {cells.map((day, idx) => {
+          const entry = day !== null ? data.get(day) ?? null : null
+          return (
+            <div key={idx} className="border-r border-b border-[#E8E8E8] min-h-[76px] p-2">
+              {day !== null && (
+                <>
+                  <div className="text-[10px] text-[#C0C0C0] leading-none mb-1.5">{day}</div>
+                  {SERIES.map(({ key, color, fmt }) => {
+                    if (!visible[key]) return null
+                    const label = entry ? fmt(entry) : null
+                    // 정확도는 70% 기준: 이상=빨강, 미만=회색
+                    let activeColor = color
+                    if (key === 'accuracy' && entry && entry.acc.length > 0) {
+                      const avg = entry.acc.reduce((a, v) => a + v) / entry.acc.length
+                      if (avg < 70) activeColor = '#B2B2B2'
+                    }
+                    return (
+                      <div key={key} className="flex items-center gap-1.5 mb-[3px]">
+                        <span className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+                          style={{ backgroundColor: label ? activeColor : '#D0D0D0' }} />
+                        {label
+                          ? <span className="text-[11px] font-semibold leading-none" style={{ color: activeColor }}>{label}</span>
+                          : <span className="text-[11px] text-[#C8C8C8] leading-none">-</span>
+                        }
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function WeeklyBarChart({
   data,
-  visible
+  visible,
+  showSeriesLabels = false
 }: {
   data: WeeklyPoint[]
   visible: Record<SeriesKey, boolean>
+  showSeriesLabels?: boolean
 }) {
   const allValues = data.flatMap(d => [d.accuracy, d.tries, d.minutes])
   const max = Math.max(...allValues, 100)
+  const colMinW = data.length <= 7 ? undefined : Math.max(48, Math.floor(660 / data.length))
 
   return (
     <div className="relative">
@@ -658,38 +801,58 @@ function WeeklyBarChart({
         <span className="text-[12px] text-[#B2B2B2] ml-2">목표</span>
       </div>
 
-      <div className="grid grid-cols-7 gap-4 h-[280px] pt-6">
-        {data.map(d => (
-          <div key={d.day} className="flex flex-col items-center">
-            <div className="flex-1 flex items-end justify-center gap-1 w-full">
-              {(['accuracy', 'tries', 'minutes'] as SeriesKey[]).map(key => {
-                if (!visible[key]) return null
-                const value = d[key]
-                const heightPct = max > 0 ? (value / max) * 100 : 0
-                const color =
-                  key === 'accuracy' ? '#FF6767' : key === 'tries' ? '#FF9873' : '#5EBC93'
-                return (
-                  <div
-                    key={key}
-                    className="flex flex-col items-center justify-end h-full"
-                    style={{ width: 24 }}
-                  >
-                    <div className="text-[12px] text-ink-700 mb-1 leading-none">{value || ''}</div>
+      <div className="overflow-x-auto">
+        <div
+          className="h-[280px] pt-6"
+          style={
+            colMinW
+              ? { display: 'grid', gridTemplateColumns: `repeat(${data.length}, ${colMinW}px)`, gap: '0.5rem' }
+              : { display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, data.length)}, 1fr)`, gap: '1rem' }
+          }
+        >
+          {data.map((d, idx) => (
+            <div key={idx} className="flex flex-col items-center">
+              <div className="flex-1 flex items-end justify-center gap-1 w-full">
+                {(['accuracy', 'tries', 'minutes'] as SeriesKey[]).map(key => {
+                  if (!visible[key]) return null
+                  const value = d[key]
+                  const heightPct = max > 0 ? (value / max) * 100 : 0
+                  const color =
+                    key === 'accuracy' ? '#FF6767' : key === 'tries' ? '#FF9873' : '#5EBC93'
+                  return (
                     <div
-                      className="w-full rounded-sm"
-                      style={{
-                        backgroundColor: value > 0 ? color : '#EAEAEA',
-                        height: `${Math.max(2, heightPct)}%`,
-                        minHeight: 4
-                      }}
-                    />
-                  </div>
-                )
-              })}
+                      key={key}
+                      className="flex flex-col items-center justify-end h-full"
+                      style={{ width: 24 }}
+                    >
+                      <div className="text-[12px] text-ink-700 mb-1 leading-none">{value || ''}</div>
+                      <div
+                        className="w-full rounded-sm"
+                        style={{
+                          backgroundColor: value > 0 ? color : '#EAEAEA',
+                          height: `${Math.max(2, heightPct)}%`,
+                          minHeight: 4
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              {showSeriesLabels && (
+                <div className="flex justify-center gap-1 mt-1">
+                  {(['accuracy', 'tries', 'minutes'] as SeriesKey[]).map(key =>
+                    visible[key] ? (
+                      <div key={key} className="text-[11px] text-ink-400 leading-none" style={{ width: 24, textAlign: 'center' }}>
+                        {key === 'accuracy' ? 'P' : key === 'tries' ? 'F' : 'T'}
+                      </div>
+                    ) : null
+                  )}
+                </div>
+              )}
+              <div className="text-[13px] font-semibold text-ink-900 mt-1">{d.day}</div>
             </div>
-            <div className="text-[13px] text-ink-900 mt-2">{d.day}</div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   )
