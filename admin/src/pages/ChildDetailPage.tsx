@@ -278,9 +278,56 @@ function MemoCard({ role, initial, lastEdited }: {
 /* ---------------------------------- */
 /* 진단 이력                           */
 /* ---------------------------------- */
+function applyDateFilter<T>(
+  items: T[],
+  getDate: (item: T) => string | null,
+  range: 'today' | '1w' | '1m' | '3m' | '12m' | null,
+  fromDate: string,
+  toDate: string,
+  customActive: boolean
+): T[] {
+  if (customActive && (fromDate || toDate)) {
+    return items.filter(item => {
+      const ds = getDate(item)
+      if (!ds) return false
+      const d = parseTreatedAt(ds)
+      if (fromDate) { const f = new Date(fromDate); f.setHours(0,0,0,0); if (d < f) return false }
+      if (toDate)   { const t = new Date(toDate);   t.setHours(23,59,59,999); if (d > t) return false }
+      return true
+    })
+  }
+  if (range === null) return items
+  const cutoff = rangeCutoff(range)
+  return items.filter(item => {
+    const ds = getDate(item)
+    return ds ? parseTreatedAt(ds) >= cutoff : false
+  })
+}
+
 function DiagnosisSection({ diagnoses }: { diagnoses: DiagnosisListItem[] }) {
-  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
+  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m' | null>(null)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [customActive, setCustomActive] = useState(false)
+  const [checked, setChecked] = useState<Set<number>>(new Set())
   const latest = diagnoses[0]
+
+  const filteredDiagnoses = applyDateFilter(diagnoses, d => d.examined_at, range, fromDate, toDate, customActive)
+  const isFiltered = range !== null || customActive
+
+  const handleRangeChange = (r: 'today' | '1w' | '1m' | '3m' | '12m') => {
+    setRange(r)
+    setCustomActive(false)
+  }
+  const handleReset = () => { setRange(null); setCustomActive(false); setFromDate(''); setToDate('') }
+
+  const toggleCheck = (id: number) => {
+    setChecked(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
 
   return (
     <section>
@@ -302,36 +349,65 @@ function DiagnosisSection({ diagnoses }: { diagnoses: DiagnosisListItem[] }) {
         </div>
       </div>
 
-      <DateRangeFilter range={range} onChange={setRange} />
+      <DateRangeFilter
+        range={range} onChange={handleRangeChange} onReset={handleReset}
+        fromDate={fromDate} toDate={toDate}
+        onFromChange={setFromDate} onToChange={setToDate}
+        onSearch={() => setCustomActive(true)}
+      />
 
-      <div className="flex items-center justify-end gap-3 my-4">
-        <span className="text-[12px] text-[#343A40]">[데이터 다운로드]</span>
-        <OutlineButton color="green">엑셀 다운</OutlineButton>
-        <OutlineButton color="orange">PDF 다운</OutlineButton>
+      <div className="flex items-center justify-between my-4">
+        <span className="text-[12px] text-[#919191]">
+          {isFiltered
+            ? `${filteredDiagnoses.length}개 표시 중 (전체 ${diagnoses.length}개)`
+            : `전체 ${diagnoses.length}개`}
+        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[12px] text-[#343A40]">[데이터 다운로드]</span>
+          <OutlineButton color="green">엑셀 다운</OutlineButton>
+          <OutlineButton color="orange">PDF 다운</OutlineButton>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-md border border-[#DEDEDE] bg-white">
-        <table className="w-full min-w-[800px] text-[15px]">
+        <table className="w-full min-w-[900px] text-[15px]">
           <thead>
             <tr className="border-b border-[#DEDEDE] bg-[#EAEAEA]">
+              <th className="w-[48px]" />
               <Th>진단일시</Th>
               <Th>사용시간</Th>
               <Th>정확도</Th>
               <Th>진단 결과 요약</Th>
+              <Th>상세보기</Th>
             </tr>
           </thead>
           <tbody>
-            {diagnoses.length === 0 && (
+            {filteredDiagnoses.length === 0 && (
               <tr>
-                <td colSpan={4} className="h-[80px] text-center text-[#B5B5B5]">진단 기록이 없습니다.</td>
+                <td colSpan={6} className="h-[80px] text-center text-[#B5B5B5]">
+                  {isFiltered ? '해당 기간에 진단 기록이 없습니다.' : '진단 기록이 없습니다.'}
+                </td>
               </tr>
             )}
-            {diagnoses.map((row) => (
+            {filteredDiagnoses.map((row) => (
               <tr key={row.id} className="hover:bg-[#F5F5F5] transition-colors">
+                <td className="h-[45px] px-3 text-center border-t border-[#DEDEDE]">
+                  <input
+                    type="checkbox"
+                    checked={checked.has(row.id)}
+                    onChange={() => toggleCheck(row.id)}
+                    className="w-4 h-4 accent-[#005744] cursor-pointer"
+                  />
+                </td>
                 <Td className="text-[#343A40]">{row.examined_at}</Td>
                 <Td className="text-[#343A40]">{row.duration_label ?? '-'}</Td>
                 <Td className="text-[#343A40]">{row.accuracy_pct != null ? `${row.accuracy_pct}%` : '-'}</Td>
                 <Td className="text-[#343A40]">{row.summary ?? '-'}</Td>
+                <td className="h-[45px] px-3 text-center border-t border-[#DEDEDE]">
+                  <button className="text-[14px] text-[#343A40] hover:text-[#005744] transition-colors">
+                    상세보기&gt;
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -351,87 +427,146 @@ function parseTreatedAt(s: string): Date {
   return new Date(y, m - 1, d)
 }
 
-function buildChartData(
+function rangeCutoff(range: 'today' | '1w' | '1m' | '3m' | '12m'): Date {
+  const days = range === 'today' ? 0 : range === '1w' ? 7 : range === '1m' ? 30 : range === '3m' ? 90 : 365
+  const cutoff = new Date()
+  cutoff.setHours(0, 0, 0, 0)
+  if (range !== 'today') cutoff.setDate(cutoff.getDate() - days)
+  return cutoff
+}
+
+type ChartGroup = { label: string; accuracy: number; tryCount: number; duration: number }
+
+function buildChartGroups(
   treatments: TreatmentListItem[],
   period: 'week' | 'month' | '3month'
-) {
+): { groups: ChartGroup[]; avgAcc: number; totalTry: number; totalMin: number } {
   const cutoffDays = period === 'week' ? 7 : period === 'month' ? 30 : 90
   const cutoff = new Date()
   cutoff.setDate(cutoff.getDate() - cutoffDays)
   cutoff.setHours(0, 0, 0, 0)
 
-  const filtered = treatments
-    .filter(t => t.treated_at && parseTreatedAt(t.treated_at) >= cutoff)
-    .slice(-7)
+  const filtered = treatments.filter(t => t.treated_at && parseTreatedAt(t.treated_at) >= cutoff)
 
-  const labels = [...filtered].reverse().map(t => {
-    const parts = t.treated_at.split(' ')[0].split('.')
-    return parts.length >= 3 ? `${Number(parts[1])}/${Number(parts[2])}` : t.treated_at
-  })
-  const rev = [...filtered].reverse()
+  let groups: ChartGroup[]
 
-  const accuracyVals = rev.map(t => t.avg_accuracy_pct ?? 0)
-  const tryVals      = rev.map(t => t.try_count      ?? 0)
-  const durationVals = rev.map(t => t.duration_minutes ?? 0)
-
-  const periodLabel = period === 'week' ? '이번주' : period === 'month' ? '이번달' : '최근 3개월'
-  const avgAcc   = accuracyVals.length ? Math.round(accuracyVals.reduce((a, b) => a + b, 0) / accuracyVals.length) : 0
-  const totalTry = tryVals.reduce((a, b) => a + b, 0)
-  const totalMin = durationVals.reduce((a, b) => a + b, 0)
-
-  return {
-    accuracy:  { labels, values: accuracyVals, maxValue: 100,                           stat: `${periodLabel} 평균 발음 정확도는 ${avgAcc}%에요.` },
-    tryCount:  { labels, values: tryVals,       maxValue: Math.max(...tryVals,      1), stat: `${periodLabel} 총 ${totalTry}회 발음했어요.` },
-    duration:  { labels, values: durationVals,  maxValue: Math.max(...durationVals, 1), stat: `${periodLabel} 총 ${totalMin}분을 연습했어요.` }
+  if (period === '3month') {
+    const byMonth = new Map<string, { accuracy: number[]; tryCount: number[]; duration: number[] }>()
+    filtered.forEach(t => {
+      const parts = t.treated_at.split(' ')[0].split('.')
+      const key = `${Number(parts[1])}월`
+      if (!byMonth.has(key)) byMonth.set(key, { accuracy: [], tryCount: [], duration: [] })
+      const entry = byMonth.get(key)!
+      if (t.avg_accuracy_pct != null) entry.accuracy.push(t.avg_accuracy_pct)
+      if (t.try_count != null) entry.tryCount.push(t.try_count)
+      if (t.duration_minutes != null) entry.duration.push(t.duration_minutes)
+    })
+    const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0
+    const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0)
+    groups = [...byMonth.entries()].map(([label, v]) => ({
+      label,
+      accuracy: avg(v.accuracy),
+      tryCount: sum(v.tryCount),
+      duration: sum(v.duration),
+    }))
+  } else {
+    const sliced = filtered.slice(-7)
+    groups = [...sliced].reverse().map(t => {
+      const parts = t.treated_at.split(' ')[0].split('.')
+      const label = parts.length >= 3 ? `${Number(parts[1])}/${Number(parts[2])}` : t.treated_at
+      return {
+        label,
+        accuracy: t.avg_accuracy_pct ?? 0,
+        tryCount: t.try_count ?? 0,
+        duration: t.duration_minutes ?? 0,
+      }
+    })
   }
+
+  const avgAcc = groups.length ? Math.round(groups.reduce((a, g) => a + g.accuracy, 0) / groups.length) : 0
+  const totalTry = groups.reduce((a, g) => a + g.tryCount, 0)
+  const totalMin = groups.reduce((a, g) => a + g.duration, 0)
+
+  return { groups, avgAcc, totalTry, totalMin }
 }
 
 function TreatmentSection({ treatments }: { treatments: TreatmentListItem[] }) {
   const [period, setPeriod] = useState<'week' | 'month' | '3month'>('week')
-  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
+  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m' | null>(null)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [customActive, setCustomActive] = useState(false)
 
-  const chartData = useMemo(() => buildChartData(treatments, period), [treatments, period])
+  const { groups, avgAcc, totalTry, totalMin } = useMemo(
+    () => buildChartGroups(treatments, period),
+    [treatments, period]
+  )
+  const periodLabel = period === 'week' ? '이번주' : period === 'month' ? '이번달' : '3개월 간'
+
+  const filteredTreatments = applyDateFilter(treatments, t => t.treated_at, range, fromDate, toDate, customActive)
+  const isFiltered = range !== null || customActive
+
+  const handleRangeChange = (r: 'today' | '1w' | '1m' | '3m' | '12m') => {
+    setRange(r)
+    setCustomActive(false)
+  }
+  const handleReset = () => { setRange(null); setCustomActive(false); setFromDate(''); setToDate('') }
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-[18px] font-semibold text-[#343A40]">치료 이력</h2>
-        <div className="flex items-center gap-4 text-[15px]">
-          {(['week', 'month', '3month'] as const).map((p) => {
-            const label = p === 'week' ? '주간' : p === 'month' ? '월간' : '3개월'
-            return (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={`pb-1 border-b-2 ${
-                  period === p ? 'border-[#005744] text-[#005744] font-semibold' : 'border-transparent text-[#919191]'
-                }`}
-              >
-                {label}
-              </button>
-            )
-          })}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-5 text-[15px] text-[#B2B2B2]">
+            <LegendDot color="bg-[#FF6767]" label="정확도(%)" />
+            <LegendDot color="bg-[#FF9873]" label="발음 횟수 (회)" />
+            <LegendDot color="bg-[#5EBC93]" label="훈련시간 (분)" />
+          </div>
+          <div className="flex items-center border border-[#005744] rounded-[5px] overflow-hidden text-[15px]">
+            {(['week', 'month', '3month'] as const).map((p) => {
+              const label = p === 'week' ? '주간' : p === 'month' ? '월간' : '3개월'
+              return (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={`px-4 h-[34px] font-medium transition-colors ${
+                    period === p ? 'bg-[#005744] text-white' : 'bg-white text-[#343A40]'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-6 mb-4 text-[14px] text-[#343A40]">
-        <LegendDot color="bg-[#4CAF50]" label="P (성공)" />
-        <LegendDot color="bg-[#FF9800]" label="F (실패)" />
-        <LegendDot color="bg-[#F44336]" label="T (시도)" />
+      <GroupedBarChart groups={groups} />
+
+      <div className="mt-4 mb-6 space-y-2">
+        <ChartStatLine color="#5EBC93" text={`${periodLabel} 총 ${totalMin}분을 연습했어요.`} />
+        <ChartStatLine color="#FF9873" text={`${periodLabel} 총 ${totalTry}회 발음했어요.`} />
+        <ChartStatLine color="#FF6767" text={`${periodLabel} 평균 발음 정확도는 ${avgAcc}%에요.`} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <ChartCard title="정확도 (%)"    data={chartData.accuracy} />
-        <ChartCard title="발음 횟수 (회)" data={chartData.tryCount} />
-        <ChartCard title="훈련시간 (분)"  data={chartData.duration} />
-      </div>
+      <DateRangeFilter
+        range={range} onChange={handleRangeChange} onReset={handleReset}
+        fromDate={fromDate} toDate={toDate}
+        onFromChange={setFromDate} onToChange={setToDate}
+        onSearch={() => setCustomActive(true)}
+      />
 
-      <DateRangeFilter range={range} onChange={setRange} />
-
-      <div className="flex items-center justify-end gap-3 my-4">
-        <span className="text-[12px] text-[#343A40]">[데이터 다운로드]</span>
-        <OutlineButton color="green">엑셀 다운</OutlineButton>
-        <OutlineButton color="orange">PDF 다운</OutlineButton>
+      <div className="flex items-center justify-between my-4">
+        <span className="text-[12px] text-[#919191]">
+          {isFiltered
+            ? `${filteredTreatments.length}개 표시 중 (전체 ${treatments.length}개)`
+            : `전체 ${treatments.length}개`}
+        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[12px] text-[#343A40]">[데이터 다운로드]</span>
+          <OutlineButton color="green">엑셀 다운</OutlineButton>
+          <OutlineButton color="orange">PDF 다운</OutlineButton>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-md border border-[#DEDEDE] bg-white">
@@ -447,12 +582,14 @@ function TreatmentSection({ treatments }: { treatments: TreatmentListItem[] }) {
             </tr>
           </thead>
           <tbody>
-            {treatments.length === 0 && (
+            {filteredTreatments.length === 0 && (
               <tr>
-                <td colSpan={6} className="h-[80px] text-center text-[#B5B5B5]">치료 기록이 없습니다.</td>
+                <td colSpan={6} className="h-[80px] text-center text-[#B5B5B5]">
+                  {isFiltered ? '해당 기간에 치료 기록이 없습니다.' : '치료 기록이 없습니다.'}
+                </td>
               </tr>
             )}
-            {treatments.map((row) => {
+            {filteredTreatments.map((row) => {
               const tags = parseTags(row.tags_json)
               return (
                 <tr key={row.id} className="hover:bg-[#F5F5F5] transition-colors">
@@ -524,11 +661,17 @@ function MetricBlock({ label, sub, value }: { label: string; sub: string; value:
 }
 
 function DateRangeFilter({
-  range,
-  onChange
+  range, onChange, onReset,
+  fromDate, toDate, onFromChange, onToChange, onSearch,
 }: {
-  range: 'today' | '1w' | '1m' | '3m' | '12m'
+  range: 'today' | '1w' | '1m' | '3m' | '12m' | null
   onChange: (r: 'today' | '1w' | '1m' | '3m' | '12m') => void
+  onReset?: () => void
+  fromDate: string
+  toDate: string
+  onFromChange: (v: string) => void
+  onToChange: (v: string) => void
+  onSearch: () => void
 }) {
   const chips: Array<['today' | '1w' | '1m' | '3m' | '12m', string]> = [
     ['today', '오늘'], ['1w', '1주일'], ['1m', '1개월'], ['3m', '3개월'], ['12m', '12개월']
@@ -538,6 +681,18 @@ function DateRangeFilter({
     <div className="flex flex-wrap items-center gap-3 bg-white border border-[#DEDEDE] rounded-[5px] p-4">
       <span className="text-[15px] font-medium text-[#343A40]">조회기간</span>
       <div className="flex items-center gap-2">
+        {onReset && (
+          <button
+            onClick={onReset}
+            className={`h-7 px-3 rounded-[3px] text-[12px] font-medium border transition ${
+              range === null
+                ? 'border-[#005744] bg-[#005744] text-white'
+                : 'border-[#DEDEDE] bg-white text-[#585858] hover:border-[#005744]'
+            }`}
+          >
+            전체
+          </button>
+        )}
         {chips.map(([key, label]) => (
           <button
             key={key}
@@ -553,29 +708,29 @@ function DateRangeFilter({
         ))}
       </div>
       <div className="flex items-center gap-2 ml-2">
-        <DateInput />
+        <DateInput value={fromDate} onChange={onFromChange} />
         <span className="text-[#919191]">~</span>
-        <DateInput />
+        <DateInput value={toDate} onChange={onToChange} />
       </div>
-      <button className="h-7 px-4 rounded-[3px] bg-[#005744] text-white text-[12px] font-medium ml-auto hover:opacity-90 transition">
+      <button
+        onClick={onSearch}
+        className="h-7 px-4 rounded-[3px] bg-[#005744] text-white text-[12px] font-medium ml-auto hover:opacity-90 transition"
+      >
         조회
       </button>
     </div>
   )
 }
 
-function DateInput() {
+function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <div className="relative">
       <input
-        type="text"
-        className="h-7 w-[110px] px-2 pr-7 border border-[#DEDEDE] rounded-[3px] text-[12px] text-[#585858] focus:outline-none focus:border-[#005744]"
-        readOnly
+        type="date"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="h-7 w-[130px] px-2 border border-[#DEDEDE] rounded-[3px] text-[12px] text-[#585858] focus:outline-none focus:border-[#005744]"
       />
-      <svg className="absolute right-2 top-1/2 -translate-y-1/2 text-[#919191] pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="3" y="4" width="18" height="18" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
-      </svg>
     </div>
   )
 }
@@ -594,7 +749,7 @@ function OutlineButton({ children, color }: { children: React.ReactNode; color: 
 function LegendDot({ color, label }: { color: string; label: string }) {
   return (
     <span className="inline-flex items-center gap-2">
-      <span className={`w-3 h-3 rounded-full ${color}`} />
+      <span className={`w-3 h-3 rounded-[2px] ${color}`} />
       {label}
     </span>
   )
@@ -611,40 +766,70 @@ function Tag({ label }: { label: string }) {
   return <span className={`inline-block px-2 py-0.5 rounded-[10px] text-[12px] ${cls}`}>{label}</span>
 }
 
-type ChartCardData = { labels: string[]; values: number[]; maxValue: number; stat: string }
+const GROUPED_CHART_H = 200
 
-function ChartCard({ title, data }: { title: string; data: ChartCardData }) {
-  const { labels, values, maxValue, stat } = data
+function GroupedBarChart({ groups }: { groups: ChartGroup[] }) {
+  const maxAcc = Math.max(...groups.map(g => g.accuracy), 1)
+  const maxTry = Math.max(...groups.map(g => g.tryCount), 1)
+  const maxDur = Math.max(...groups.map(g => g.duration), 1)
+  const BAR_AREA = GROUPED_CHART_H - 32
+
   return (
-    <div className="bg-white border border-[#DEDEDE] rounded-[5px] p-4">
-      <div className="text-[14px] font-medium text-[#343A40] mb-3">{title}</div>
-      <div className="h-[140px] flex items-end gap-3 border-b border-dashed border-[#DEDEDE] relative">
-        <span className="absolute top-0 right-0 text-[10px] text-[#B0B0B0]">목표</span>
-        {labels.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-[12px] text-[#B5B5B5] pb-4">데이터 없음</div>
-        ) : labels.map((label, i) => {
-          const pct = maxValue > 0 ? Math.round((values[i] / maxValue) * 100) : 0
-          return (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <div className="w-full flex items-end justify-center gap-0.5" style={{ height: '120px' }}>
-                <span className="w-2 bg-[#4CAF50] rounded-sm" style={{ height: `${pct}%` }} />
-                <span className="w-2 bg-[#FF9800] rounded-sm" style={{ height: `${pct > 0 ? Math.max(8, pct - 20) : 0}%` }} />
-                <span className="w-2 bg-[#F44336] rounded-sm" style={{ height: `${pct > 0 ? Math.max(15, pct - 10) : 0}%` }} />
+    <div className="bg-white border border-[#DEDEDE] rounded-[5px] px-8 pt-4 pb-0">
+      {groups.length === 0 ? (
+        <div className="flex items-center justify-center text-[14px] text-[#B5B5B5]" style={{ height: GROUPED_CHART_H }}>
+          데이터 없음
+        </div>
+      ) : (
+        <div className="flex items-end justify-around border-b border-[#DEDEDE]" style={{ height: GROUPED_CHART_H }}>
+          {groups.map((g, i) => {
+            const aH = g.accuracy > 0 ? Math.max(Math.round((g.accuracy / maxAcc) * BAR_AREA), 4) : 0
+            const tH = g.tryCount > 0 ? Math.max(Math.round((g.tryCount / maxTry) * BAR_AREA), 4) : 0
+            const dH = g.duration > 0 ? Math.max(Math.round((g.duration / maxDur) * BAR_AREA), 4) : 0
+            return (
+              <div key={i} className="flex flex-col items-center gap-3">
+                <div className="flex items-end gap-[6px]">
+                  <SingleBar value={g.accuracy} height={aH} color="#FF6767" />
+                  <SingleBar value={g.tryCount}  height={tH} color="#FF9873" />
+                  <SingleBar value={g.duration}  height={dH} color="#5EBC93" />
+                </div>
+                <span className="text-[15px] font-semibold text-[#343A40] pb-2">{g.label}</span>
               </div>
-              <span className="text-[11px] text-[#919191] truncate max-w-full">{label}</span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-3 text-[13px] text-[#585858]">
-        {stat.split(/(\d+%?|\d+회|\d+분)/g).map((part, i) =>
-          /\d/.test(part) ? (
-            <span key={i} className="text-[#005744] font-semibold">{part}</span>
-          ) : (
-            <span key={i}>{part}</span>
-          )
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SingleBar({ value, height, color }: { value: number; height: number; color: string }) {
+  return (
+    <div className="flex flex-col items-center gap-[4px]">
+      <span className="text-[13px] text-[#343A40]">{value > 0 ? value : 0}</span>
+      <div
+        style={{
+          width: '37px',
+          height: height > 0 ? `${height}px` : '0px',
+          backgroundColor: color,
+          borderRadius: '4px 4px 0 0',
+        }}
+      />
+    </div>
+  )
+}
+
+function ChartStatLine({ color, text }: { color: string; text: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[15px] font-semibold text-[#343A40]">
+      <span className="w-4 h-4 rounded-[2px] flex-shrink-0" style={{ backgroundColor: color }} />
+      <span>
+        {text.split(/(\d+)/g).map((part, i) =>
+          /^\d+$/.test(part) ? (
+            <span key={i} style={{ color: '#FD8D65' }}>{part}</span>
+          ) : part
         )}
-      </div>
+      </span>
     </div>
   )
 }

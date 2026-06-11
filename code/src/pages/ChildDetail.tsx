@@ -187,10 +187,10 @@ export default function ChildDetail({ id }: Props) {
           </section>
 
           {/* 진단 이력 */}
-          <DiagnosisSection childId={id} diagnoses={diagnoses} />
+          <DiagnosisSection childId={id} identifier={detail.child.identifier} diagnoses={diagnoses} />
 
           {/* 치료 이력 */}
-          <TreatmentSection childId={id} treatments={treatments} />
+          <TreatmentSection childId={id} identifier={detail.child.identifier} treatments={treatments} />
 
           <div className="text-[12px] text-ink-400 pt-4">아동 ID: {id}</div>
         </main>
@@ -619,12 +619,141 @@ function MemoCard({
 }
 
 /* ---------------------------------- */
+/* 날짜 필터 유틸                        */
+/* ---------------------------------- */
+function parseDateStr(s: string): Date {
+  const [y, m, d] = s.split(' ')[0].split('.').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function rangeCutoff(range: 'today' | '1w' | '1m' | '3m' | '12m'): Date {
+  const days = range === 'today' ? 0 : range === '1w' ? 7 : range === '1m' ? 30 : range === '3m' ? 90 : 365
+  const cutoff = new Date()
+  cutoff.setHours(0, 0, 0, 0)
+  if (range !== 'today') cutoff.setDate(cutoff.getDate() - days)
+  return cutoff
+}
+
+function applyDateFilter<T>(
+  items: T[],
+  getDate: (item: T) => string | null,
+  range: 'today' | '1w' | '1m' | '3m' | '12m' | null,
+  fromDate: string,
+  toDate: string,
+  customActive: boolean
+): T[] {
+  if (customActive && (fromDate || toDate)) {
+    return items.filter(item => {
+      const ds = getDate(item)
+      if (!ds) return false
+      const d = parseDateStr(ds)
+      if (fromDate) { const f = new Date(fromDate); f.setHours(0, 0, 0, 0); if (d < f) return false }
+      if (toDate)   { const t = new Date(toDate);   t.setHours(23, 59, 59, 999); if (d > t) return false }
+      return true
+    })
+  }
+  if (range === null) return items
+  const cutoff = rangeCutoff(range)
+  return items.filter(item => {
+    const ds = getDate(item)
+    return ds ? parseDateStr(ds) >= cutoff : false
+  })
+}
+
+/* ---------------------------------- */
+/* 목록 내보내기 유틸                   */
+/* ---------------------------------- */
+async function downloadAsExcel(filename: string, headers: string[], rows: (string | number | null)[][]) {
+  const XLSX = await import('xlsx')
+  const data = [headers, ...rows.map(r => r.map(c => c ?? '-'))]
+  const sheet = XLSX.utils.aoa_to_sheet(data)
+  sheet['!cols'] = headers.map(() => ({ wch: 18 }))
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, sheet, '목록')
+  XLSX.writeFile(wb, filename.replace(/[\\/:*?"<>|]/g, '_'))
+}
+
+async function downloadAsPdf(title: string, filename: string, headers: string[], rows: (string | number | null)[][]) {
+  const wrap = document.createElement('div')
+  wrap.style.cssText = 'padding:20px;font-family:sans-serif;background:#fff'
+  const h = document.createElement('h2')
+  h.textContent = title
+  h.style.cssText = 'font-size:16px;margin-bottom:12px;color:#343A40'
+  wrap.appendChild(h)
+  const table = document.createElement('table')
+  table.style.cssText = 'border-collapse:collapse;width:100%;font-size:12px'
+  const thead = document.createElement('thead')
+  const hrow = document.createElement('tr')
+  for (const hd of headers) {
+    const th = document.createElement('th')
+    th.textContent = hd
+    th.style.cssText = 'border:1px solid #ddd;padding:6px 10px;background:#f5f5f5;text-align:center'
+    hrow.appendChild(th)
+  }
+  thead.appendChild(hrow)
+  table.appendChild(thead)
+  const tbody = document.createElement('tbody')
+  for (const row of rows) {
+    const tr = document.createElement('tr')
+    for (const cell of row) {
+      const td = document.createElement('td')
+      td.textContent = String(cell ?? '-')
+      td.style.cssText = 'border:1px solid #ddd;padding:6px 10px;text-align:center'
+      tr.appendChild(td)
+    }
+    tbody.appendChild(tr)
+  }
+  table.appendChild(tbody)
+  wrap.appendChild(table)
+  document.body.appendChild(wrap)
+  try {
+    const { exportElementToPdf } = await import('../lib/exporters')
+    await exportElementToPdf(wrap, filename.replace(/[\\/:*?"<>|]/g, '_'))
+  } finally {
+    document.body.removeChild(wrap)
+  }
+}
+
+/* ---------------------------------- */
 /* 진단 이력                           */
 /* ---------------------------------- */
-function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: DiagnosisListItem[] }) {
+function DiagnosisSection({ childId, identifier, diagnoses }: { childId: number; identifier: string; diagnoses: DiagnosisListItem[] }) {
   const { go } = useRouter()
-  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
+  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m' | null>(null)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [customActive, setCustomActive] = useState(false)
+  const [page, setPage] = useState(1)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const latest = diagnoses[0]
+
+  const filteredDiagnoses = applyDateFilter(diagnoses, d => d.examined_at, range, fromDate, toDate, customActive)
+  const isFiltered = range !== null || customActive
+  const totalPages = Math.ceil(filteredDiagnoses.length / 10) || 1
+  const pagedDiagnoses = filteredDiagnoses.slice((page - 1) * 10, page * 10)
+
+  const allPageSelected = pagedDiagnoses.length > 0 && pagedDiagnoses.every(r => selectedIds.has(r.id))
+  const toggleAll = () => setSelectedIds(prev => {
+    const next = new Set(prev)
+    allPageSelected ? pagedDiagnoses.forEach(r => next.delete(r.id)) : pagedDiagnoses.forEach(r => next.add(r.id))
+    return next
+  })
+  const toggleRow = (id: number) => setSelectedIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
+
+  const selectedRows = filteredDiagnoses.filter(r => selectedIds.has(r.id))
+  const hasSelection = selectedRows.length > 0
+
+  const DIAG_HEADERS = ['진단일시', '사용시간', '정확도', '진단 결과 요약']
+  const toRows = (items: DiagnosisListItem[]) =>
+    items.map(r => [r.examined_at, r.duration_label ?? '-', r.accuracy_pct != null ? `${r.accuracy_pct}%` : '-', r.summary ?? '-'])
+
+  const handleExcel = () => downloadAsExcel(`진단목록_${identifier}.xlsx`, DIAG_HEADERS, toRows(selectedRows))
+  const handlePdf   = () => downloadAsPdf(`진단 이력 (${identifier})`, `진단목록_${identifier}.pdf`, DIAG_HEADERS, toRows(selectedRows))
+
+  const handleRangeChange = (r: 'today' | '1w' | '1m' | '3m' | '12m') => { setRange(r); setCustomActive(false); setPage(1) }
+  const handleReset = () => { setRange(null); setCustomActive(false); setFromDate(''); setToDate(''); setPage(1) }
 
   return (
     <section>
@@ -646,19 +775,38 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
         </div>
       </div>
 
-      <DateRangeFilter range={range} onChange={setRange} />
+      <DateRangeFilter
+        range={range} onChange={handleRangeChange} onReset={handleReset}
+        fromDate={fromDate} toDate={toDate}
+        onFromChange={setFromDate} onToChange={setToDate}
+        onSearch={() => setCustomActive(true)}
+      />
 
-      <div className="flex items-center justify-end gap-3 my-4">
-        <span className="text-[12px] text-ink-900">[데이터 다운로드]</span>
-        <OutlineButton>엑셀 다운</OutlineButton>
-        <OutlineButton>PDF 다운</OutlineButton>
+      <div className="flex items-center justify-between my-4">
+        <span className="text-[12px] text-ink-500">
+          {isFiltered
+            ? `${filteredDiagnoses.length}개 표시 중 (전체 ${diagnoses.length}개)`
+            : `전체 ${diagnoses.length}개`}
+        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[12px] text-ink-900">[데이터 다운로드]</span>
+          <OutlineButton onClick={handleExcel} disabled={!hasSelection}>엑셀 다운</OutlineButton>
+          <OutlineButton onClick={handlePdf} disabled={!hasSelection}>PDF 다운</OutlineButton>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
         <table className="w-full min-w-[800px] text-[15px]">
           <thead>
             <tr className="border-b border-line bg-line-soft">
-              <Th className="w-10"><span className="sr-only">선택</span></Th>
+              <Th className="w-10">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand"
+                  checked={allPageSelected}
+                  onChange={toggleAll}
+                />
+              </Th>
               <Th>진단일시</Th>
               <Th>사용시간</Th>
               <Th>정확도</Th>
@@ -667,19 +815,26 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
             </tr>
           </thead>
           <tbody>
-            {diagnoses.length === 0 && (
+            {pagedDiagnoses.length === 0 && (
               <tr>
-                <td colSpan={6} className="h-[80px] text-center text-ink-400">진단 기록이 없습니다.</td>
+                <td colSpan={6} className="h-[80px] text-center text-ink-400">
+                  {isFiltered ? '해당 기간에 진단 기록이 없습니다.' : '진단 기록이 없습니다.'}
+                </td>
               </tr>
             )}
-            {diagnoses.map((row) => (
+            {pagedDiagnoses.map((row) => (
               <tr
                 key={row.id}
                 onClick={() => go({ name: 'diagnosis', childId, diagnosisId: row.id })}
                 className="cursor-pointer hover:bg-surface-active transition-colors"
               >
                 <Td onClick={(e) => e.stopPropagation()}>
-                  <input type="checkbox" className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand" />
+                  <input
+                    type="checkbox"
+                    className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand"
+                    checked={selectedIds.has(row.id)}
+                    onChange={() => toggleRow(row.id)}
+                  />
                 </Td>
                 <Td className="text-ink-850">{row.examined_at}</Td>
                 <Td className="text-ink-850">{row.duration_label ?? '-'}</Td>
@@ -699,7 +854,7 @@ function DiagnosisSection({ childId, diagnoses }: { childId: number; diagnoses: 
         </table>
       </div>
 
-      <SmallPagination />
+      <SmallPagination current={page} total={totalPages} onChange={setPage} />
     </section>
   )
 }
@@ -893,10 +1048,51 @@ function CDWeeklyBarChart({
   )
 }
 
-function TreatmentSection({ childId, treatments }: { childId: number; treatments: TreatmentListItem[] }) {
+function TreatmentSection({ childId, identifier, treatments }: { childId: number; identifier: string; treatments: TreatmentListItem[] }) {
   const { go } = useRouter()
   const [period, setPeriod] = useState<'week' | 'month' | '3month'>('week')
-  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m'>('1m')
+  const [range, setRange] = useState<'today' | '1w' | '1m' | '3m' | '12m' | null>(null)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [customActive, setCustomActive] = useState(false)
+
+  const [page, setPage] = useState(1)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+
+  const filteredTreatments = applyDateFilter(treatments, t => t.treated_at, range, fromDate, toDate, customActive)
+  const isFiltered = range !== null || customActive
+  const totalPages = Math.ceil(filteredTreatments.length / 10) || 1
+  const pagedTreatments = filteredTreatments.slice((page - 1) * 10, page * 10)
+
+  const allPageSelected = pagedTreatments.length > 0 && pagedTreatments.every(r => selectedIds.has(r.id))
+  const toggleAll = () => setSelectedIds(prev => {
+    const next = new Set(prev)
+    allPageSelected ? pagedTreatments.forEach(r => next.delete(r.id)) : pagedTreatments.forEach(r => next.add(r.id))
+    return next
+  })
+  const toggleRow = (id: number) => setSelectedIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
+
+  const selectedRows = filteredTreatments.filter(r => selectedIds.has(r.id))
+  const hasSelection = selectedRows.length > 0
+
+  const TREAT_HEADERS = ['치료일시', '회기', '훈련조음', '치료 분야', '발음 시도 횟수', '평균정확도']
+  const toRows = (items: TreatmentListItem[]) =>
+    items.map(r => [
+      r.treated_at,
+      r.session_no != null ? `${r.session_no}회기` : '-',
+      r.trained_sound ?? '-',
+      parseTags(r.tags_json).join(', ') || '-',
+      r.try_count != null ? `${r.try_count}회` : '-',
+      r.avg_accuracy_pct != null ? `${r.avg_accuracy_pct}%` : '-',
+    ])
+
+  const handleExcel = () => downloadAsExcel(`치료목록_${identifier}.xlsx`, TREAT_HEADERS, toRows(selectedRows))
+  const handlePdf   = () => downloadAsPdf(`치료 이력 (${identifier})`, `치료목록_${identifier}.pdf`, TREAT_HEADERS, toRows(selectedRows))
+
+  const handleRangeChange = (r: 'today' | '1w' | '1m' | '3m' | '12m') => { setRange(r); setCustomActive(false); setPage(1) }
+  const handleReset = () => { setRange(null); setCustomActive(false); setFromDate(''); setToDate(''); setPage(1) }
 
   const [visible, setVisible] = useState<Record<CDSeriesKey, boolean>>({
     accuracy: true, tries: true, minutes: true
@@ -1033,18 +1229,38 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
         {period === '3month' && <CDWeeklyBarChart data={monthlyData} visible={visible} showSeriesLabels />}
       </div>
 
-      <DateRangeFilter range={range} onChange={setRange} />
+      <DateRangeFilter
+        range={range} onChange={handleRangeChange} onReset={handleReset}
+        fromDate={fromDate} toDate={toDate}
+        onFromChange={setFromDate} onToChange={setToDate}
+        onSearch={() => setCustomActive(true)}
+      />
 
-      <div className="flex items-center justify-end gap-3 my-4">
-        <span className="text-[12px] text-ink-900">[데이터 다운로드]</span>
-        <OutlineButton>엑셀 다운</OutlineButton>
-        <OutlineButton>PDF 다운</OutlineButton>
+      <div className="flex items-center justify-between my-4">
+        <span className="text-[12px] text-ink-500">
+          {isFiltered
+            ? `${filteredTreatments.length}개 표시 중 (전체 ${treatments.length}개)`
+            : `전체 ${treatments.length}개`}
+        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[12px] text-ink-900">[데이터 다운로드]</span>
+          <OutlineButton onClick={handleExcel} disabled={!hasSelection}>엑셀 다운</OutlineButton>
+          <OutlineButton onClick={handlePdf} disabled={!hasSelection}>PDF 다운</OutlineButton>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
         <table className="w-full min-w-[900px] text-[15px]">
           <thead>
             <tr className="border-b border-line bg-line-soft">
+              <Th className="w-10">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand"
+                  checked={allPageSelected}
+                  onChange={toggleAll}
+                />
+              </Th>
               <Th>치료일시</Th>
               <Th>회기</Th>
               <Th>훈련조음</Th>
@@ -1055,12 +1271,14 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
             </tr>
           </thead>
           <tbody>
-            {treatments.length === 0 && (
+            {filteredTreatments.length === 0 && (
               <tr>
-                <td colSpan={7} className="h-[80px] text-center text-ink-400">치료 기록이 없습니다.</td>
+                <td colSpan={8} className="h-[80px] text-center text-ink-400">
+                  {isFiltered ? '해당 기간에 치료 기록이 없습니다.' : '치료 기록이 없습니다.'}
+                </td>
               </tr>
             )}
-            {treatments.map((row) => {
+            {pagedTreatments.map((row) => {
               const tags = parseTags(row.tags_json)
               return (
                 <tr
@@ -1068,6 +1286,14 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
                   onClick={() => go({ name: 'treatment', childId, treatmentId: row.id })}
                   className="cursor-pointer hover:bg-surface-active transition-colors"
                 >
+                  <Td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5 rounded-[3px] border border-ink-850 accent-brand"
+                      checked={selectedIds.has(row.id)}
+                      onChange={() => toggleRow(row.id)}
+                    />
+                  </Td>
                   <Td className="text-ink-850">{row.treated_at}</Td>
                   <Td className="text-ink-850">{row.session_no ?? '-'}회기</Td>
                   <Td className="text-ink-850">{row.trained_sound ?? '-'}</Td>
@@ -1095,7 +1321,7 @@ function TreatmentSection({ childId, treatments }: { childId: number; treatments
         </table>
       </div>
 
-      <SmallPagination />
+      <SmallPagination current={page} total={totalPages} onChange={setPage} />
     </section>
   )
 }
@@ -1150,11 +1376,17 @@ function MetricBlock({ label, sub, value }: { label: string; sub: string; value:
 }
 
 function DateRangeFilter({
-  range,
-  onChange
+  range, onChange, onReset,
+  fromDate, toDate, onFromChange, onToChange, onSearch
 }: {
-  range: 'today' | '1w' | '1m' | '3m' | '12m'
+  range: 'today' | '1w' | '1m' | '3m' | '12m' | null
   onChange: (r: 'today' | '1w' | '1m' | '3m' | '12m') => void
+  onReset?: () => void
+  fromDate: string
+  toDate: string
+  onFromChange: (v: string) => void
+  onToChange: (v: string) => void
+  onSearch: () => void
 }) {
   const chips: Array<['today' | '1w' | '1m' | '3m' | '12m', string]> = [
     ['today', '오늘'],
@@ -1168,6 +1400,18 @@ function DateRangeFilter({
     <div className="flex flex-wrap items-center gap-3 bg-surface-card border border-line rounded-[5px] p-4">
       <span className="text-[15px] font-medium text-ink-850">조회기간</span>
       <div className="flex items-center gap-2">
+        {onReset && (
+          <button
+            onClick={onReset}
+            className={`h-7 px-3 rounded-[3px] text-[12px] font-medium border transition ${
+              range === null
+                ? 'border-brand bg-brand text-white'
+                : 'border-line bg-surface-card text-ink-700 hover:border-brand'
+            }`}
+          >
+            전체
+          </button>
+        )}
         {chips.map(([key, label]) => (
           <button
             key={key}
@@ -1184,38 +1428,39 @@ function DateRangeFilter({
       </div>
 
       <div className="flex items-center gap-2 ml-2">
-        <DateInput value="2025.02.03" />
+        <DateInput value={fromDate} onChange={onFromChange} />
         <span className="text-ink-500">~</span>
-        <DateInput value="2025.03.03" />
+        <DateInput value={toDate} onChange={onToChange} />
       </div>
 
-      <button className="h-7 px-4 rounded-[3px] bg-brand text-white text-[12px] font-medium ml-auto hover:opacity-90 transition">
+      <button
+        onClick={onSearch}
+        className="h-7 px-4 rounded-[3px] bg-brand text-white text-[12px] font-medium ml-auto hover:opacity-90 transition"
+      >
         조회
       </button>
     </div>
   )
 }
 
-function DateInput({ value }: { value: string }) {
+function DateInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <div className="relative">
-      <input
-        type="text"
-        defaultValue={value}
-        className="h-7 w-[110px] px-2 pr-7 border border-line rounded-[3px] text-[12px] text-ink-700 focus:outline-none focus:border-brand"
-        readOnly
-      />
-      <svg className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="3" y="4" width="18" height="18" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
-      </svg>
-    </div>
+    <input
+      type="date"
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="h-7 w-[130px] px-2 border border-line rounded-[3px] text-[12px] text-ink-700 focus:outline-none focus:border-brand"
+    />
   )
 }
 
-function OutlineButton({ children }: { children: React.ReactNode }) {
+function OutlineButton({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (
-    <button className="h-9 px-3 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors">
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="h-9 px-3 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-brand"
+    >
       {children}
     </button>
   )
@@ -1234,32 +1479,58 @@ function Tag({ label }: { label: string }) {
 }
 
 
-function SmallPagination({ pages = [1] }: { pages?: number[] }) {
-  if (pages.length <= 1) {
-    return (
-      <div className="flex items-center justify-center gap-1 mt-6">
-        <button className="w-7 h-7 rounded-[3px] text-[15px] font-medium bg-line-dash text-ink-700">
-          1
-        </button>
-      </div>
-    )
-  }
+function SmallPagination({ current, total, onChange }: {
+  current: number
+  total: number
+  onChange: (page: number) => void
+}) {
+  const delta = 2
+  const left = Math.max(1, current - delta)
+  const right = Math.min(total, current + delta)
+  const pages: number[] = []
+  for (let i = left; i <= right; i++) pages.push(i)
+
   return (
     <div className="flex items-center justify-center gap-1 mt-6 text-[15px] text-ink-500">
-      <button className="w-7 h-7 grid place-items-center hover:text-brand">
+      <button
+        disabled={current === 1}
+        onClick={() => onChange(current - 1)}
+        className="w-7 h-7 grid place-items-center hover:text-brand disabled:opacity-30 disabled:cursor-not-allowed"
+      >
         <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 1 1 6l5 5" strokeLinecap="round" /></svg>
       </button>
+
+      {left > 1 && (
+        <>
+          <button onClick={() => onChange(1)} className="w-7 h-7 rounded-[3px] font-medium hover:bg-surface-active">1</button>
+          {left > 2 && <span className="px-1 text-ink-400">…</span>}
+        </>
+      )}
+
       {pages.map((n) => (
         <button
           key={n}
+          onClick={() => onChange(n)}
           className={`w-7 h-7 rounded-[3px] font-medium transition ${
-            n === 1 ? 'bg-line-dash text-ink-700' : 'text-ink-500 hover:bg-surface-active'
+            n === current ? 'bg-line-dash text-ink-700' : 'text-ink-500 hover:bg-surface-active'
           }`}
         >
           {n}
         </button>
       ))}
-      <button className="w-7 h-7 grid place-items-center hover:text-brand">
+
+      {right < total && (
+        <>
+          {right < total - 1 && <span className="px-1 text-ink-400">…</span>}
+          <button onClick={() => onChange(total)} className="w-7 h-7 rounded-[3px] font-medium hover:bg-surface-active">{total}</button>
+        </>
+      )}
+
+      <button
+        disabled={current === total}
+        onClick={() => onChange(current + 1)}
+        className="w-7 h-7 grid place-items-center hover:text-brand disabled:opacity-30 disabled:cursor-not-allowed"
+      >
         <svg width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="m1 1 5 5-5 5" strokeLinecap="round" /></svg>
       </button>
     </div>
