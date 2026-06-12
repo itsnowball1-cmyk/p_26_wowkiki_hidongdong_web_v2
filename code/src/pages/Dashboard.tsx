@@ -88,7 +88,8 @@ function daysSince(dateStr: string | null): number | null {
 }
 
 function DiagnosisCell({ child, isClinical }: { child: Child; isClinical: boolean }) {
-  const needsRediag = isClinical && (daysSince(child.diagnosis_date) ?? 0) >= 14
+  const daysSinceDiag = daysSince(child.diagnosis_date)
+  const needsRediag = isClinical && daysSinceDiag !== null && daysSinceDiag >= 14
   return (
     <div className="flex items-center justify-center gap-1.5 flex-wrap">
       <span className="text-[#484848]">{child.diagnosis_date ?? '-'}</span>

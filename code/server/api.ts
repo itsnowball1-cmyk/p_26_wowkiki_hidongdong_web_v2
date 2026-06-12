@@ -2728,24 +2728,24 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            c.regist_date,
            (SELECT r.analysislog
             FROM tb_childact_report r
-            WHERE r.id = c.id AND r.use_type = 'training'
+            WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'training'
               AND DATE(r.act_date) = CURDATE()
             ORDER BY r.idx DESC LIMIT 1)              AS today_log,
            (SELECT r.analysislog
             FROM tb_childact_report r
-            WHERE r.id = c.id AND r.use_type = 'training'
+            WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'training'
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS latest_log,
            (SELECT DATEDIFF(CURDATE(), DATE(r.act_date))
             FROM tb_childact_report r
-            WHERE r.id = c.id AND r.use_type = 'training'
+            WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'training'
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS days_since_trained,
            (SELECT DATE(r.act_date)
             FROM tb_childact_report r
-            WHERE r.id = c.id AND r.use_type = 'diagnostic'
+            WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'diagnostic' AND r.analysislog IS NOT NULL
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diagnosis_date,
            (SELECT r.analysislog
             FROM tb_childact_report r
-            WHERE r.id = c.id AND r.use_type = 'diagnostic'
+            WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'diagnostic' AND r.analysislog IS NOT NULL
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diag_log
          FROM tb_member c
          WHERE c.mtype = 'child' AND c.delete_yn = 'N' AND c.instt_code = ?
