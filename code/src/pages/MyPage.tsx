@@ -1,19 +1,66 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react'
 import Sidebar from '../components/Sidebar'
 import AdminSidebar from '../components/AdminSidebar'
 import TopBar from '../components/TopBar'
 import Modal, { ModalCloseButton } from '../components/Modal'
 import { useAuth } from '../lib/auth'
+import { api } from '../lib/api'
 
 const DAYS = ['월', '화', '수', '목', '금', '토', '일'] as const
 type Day = (typeof DAYS)[number]
 
+function parseDiagDays(raw: string | null): Set<Day> {
+  if (!raw) return new Set()
+  return new Set(raw.split(',').filter((d): d is Day => (DAYS as readonly string[]).includes(d)))
+}
+
 export default function MyPage() {
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const [qrOpen, setQrOpen] = useState(false)
   const [pwOpen, setPwOpen] = useState(false)
   const qrCanvasRef = useRef<HTMLDivElement>(null)
+
+  const [editingProfile, setEditingProfile] = useState(false)
+  const [editingSchedule, setEditingSchedule] = useState(false)
+  const [phoneVerifyOpen, setPhoneVerifyOpen] = useState(false)
+  const [phoneChangeOpen, setPhoneChangeOpen] = useState(false)
+
+  const [name, setName] = useState(user?.name ?? '')
+  const [department, setDepartment] = useState(user?.department ?? '')
+  const [phone, setPhone] = useState<string | null>(null)
+  const [instName, setInstName] = useState<string | null>(null)
+  const [lastEdited, setLastEdited] = useState<string | null>(null)
+  const [workingDays, setWorkingDays] = useState<Set<Day>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [savingSchedule, setSavingSchedule] = useState(false)
+
+  const loadMypage = useCallback(async () => {
+    try {
+      const data = await api.mypage()
+      setPhone(data.phone)
+      setInstName(data.instName)
+      setLastEdited(data.updateDate)
+      setWorkingDays(parseDiagDays(data.diagDays))
+    } catch {
+      // 로드 실패 시 조용히 넘어감
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadMypage()
+  }, [loadMypage])
+
+  // user 컨텍스트에서 최신 이름/소속 동기화
+  useEffect(() => {
+    if (user?.name) setName(user.name)
+    if (user?.department !== undefined) setDepartment(user.department ?? '')
+  }, [user?.name, user?.department])
+
+  if (!user) return null
 
   const handleDownloadQr = () => {
     const canvas = qrCanvasRef.current?.querySelector('canvas')
@@ -21,24 +68,9 @@ export default function MyPage() {
     const url = canvas.toDataURL('image/png')
     const a = document.createElement('a')
     a.href = url
-    a.download = `${user?.name ?? ''}\_QR코드.png`
+    a.download = `${user.name}_QR코드.png`
     a.click()
   }
-  const [editingProfile, setEditingProfile] = useState(false)
-  const [editingSchedule, setEditingSchedule] = useState(false)
-  const [phoneVerifyOpen, setPhoneVerifyOpen] = useState(false)
-  const [phoneChangeOpen, setPhoneChangeOpen] = useState(false)
-
-  // 임시 사용자 데이터 — 실제로는 API/auth에서 가져옴
-  const [name, setName] = useState(user?.name ?? '김아무개')
-  const [phone, setPhone] = useState('010-1234-5678')
-  const [department, setDepartment] = useState(user?.department ?? '재활의학과')
-  const [institutionName] = useState('OOOO병원')
-  const [workingDays, setWorkingDays] = useState<Set<Day>>(new Set(['월', '수']))
-
-  if (!user) return null
-
-  const lastEdited = '2026-10-10 15:30'
 
   const toggleDay = (d: Day) => {
     if (!editingSchedule) return
@@ -48,6 +80,40 @@ export default function MyPage() {
       else next.add(d)
       return next
     })
+  }
+
+  const handleSaveProfile = async () => {
+    if (!editingProfile) {
+      setEditingProfile(true)
+      return
+    }
+    setSavingProfile(true)
+    try {
+      await api.updateMyProfile({ name, department })
+      await refreshUser()
+      setEditingProfile(false)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '저장 중 오류가 발생했습니다.')
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  const handleSaveSchedule = async () => {
+    if (!editingSchedule) {
+      setEditingSchedule(true)
+      return
+    }
+    setSavingSchedule(true)
+    try {
+      const diagDays = [...workingDays].join(',') || null
+      await api.updateMySchedule(diagDays)
+      setEditingSchedule(false)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '저장 중 오류가 발생했습니다.')
+    } finally {
+      setSavingSchedule(false)
+    }
   }
 
   return (
@@ -62,23 +128,21 @@ export default function MyPage() {
           <div className="flex items-end justify-between mb-4">
             <div className="flex items-baseline gap-4">
               <h2 className="text-[18px] font-semibold text-ink-900">내 정보</h2>
-              <span className="text-[12px] text-ink-200">최종 정보 수정일시 : {lastEdited}</span>
+              {lastEdited && (
+                <span className="text-[12px] text-ink-200">최종 정보 수정일시 : {lastEdited}</span>
+              )}
             </div>
             <button
               type="button"
-              onClick={() => {
-                if (editingProfile) {
-                  alert('변경 내용이 저장되었습니다.')
-                }
-                setEditingProfile((v) => !v)
-              }}
-              className="h-10 px-5 rounded-[5px] bg-brand text-white text-[14px] font-medium hover:opacity-90 transition"
+              onClick={handleSaveProfile}
+              disabled={savingProfile || loading}
+              className="h-10 px-5 rounded-[5px] bg-brand text-white text-[14px] font-medium hover:opacity-90 transition disabled:opacity-60"
             >
-              {editingProfile ? '저장' : '정보 변경'}
+              {savingProfile ? '저장 중…' : editingProfile ? '저장' : '정보 변경'}
             </button>
           </div>
 
-          {/* 내 정보 테이블 — 4행 × 2 컬럼쌍 */}
+          {/* 내 정보 테이블 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 border border-line bg-surface-card overflow-hidden rounded-md">
             {/* Row 1 */}
             <Cell label="이름">
@@ -92,14 +156,14 @@ export default function MyPage() {
               {editingProfile ? (
                 <InlineInput value={department} onChange={setDepartment} />
               ) : (
-                <span>{department}</span>
+                <span>{department || '-'}</span>
               )}
             </Cell>
 
             {/* Row 2 */}
             <Cell label="휴대전화">
               <div className="flex items-center justify-between w-full">
-                <span>{phone}</span>
+                <span>{phone ?? (loading ? '…' : '-')}</span>
                 <button
                   type="button"
                   onClick={() => setPhoneVerifyOpen(true)}
@@ -110,7 +174,7 @@ export default function MyPage() {
               </div>
             </Cell>
             <Cell label="기관정보">
-              <span>{institutionName}</span>
+              <span>{loading ? '…' : (instName ?? user.institutionCode)}</span>
             </Cell>
 
             {/* Row 3 */}
@@ -148,15 +212,11 @@ export default function MyPage() {
             <h2 className="text-[18px] font-semibold text-ink-900">근무 일정</h2>
             <button
               type="button"
-              onClick={() => {
-                if (editingSchedule) {
-                  alert('근무 일정이 저장되었습니다.')
-                }
-                setEditingSchedule((v) => !v)
-              }}
-              className="h-10 px-5 rounded-[5px] bg-brand text-white text-[14px] font-medium hover:opacity-90 transition"
+              onClick={handleSaveSchedule}
+              disabled={savingSchedule || loading}
+              className="h-10 px-5 rounded-[5px] bg-brand text-white text-[14px] font-medium hover:opacity-90 transition disabled:opacity-60"
             >
-              {editingSchedule ? '저장' : '수정'}
+              {savingSchedule ? '저장 중…' : editingSchedule ? '저장' : '수정'}
             </button>
           </div>
 
@@ -233,7 +293,7 @@ export default function MyPage() {
       </Modal>
 
       {/* 비밀번호 변경 모달 */}
-      <PasswordChangeModal open={pwOpen} onClose={() => setPwOpen(false)} />
+      <PasswordChangeModal open={pwOpen} onClose={() => setPwOpen(false)} onChanged={() => setLastEdited(new Date().toISOString().slice(0, 19).replace('T', ' '))} />
 
       {/* 휴대전화 변경 - 1단계: 비밀번호 확인 */}
       <PhoneVerifyPasswordModal
@@ -251,6 +311,7 @@ export default function MyPage() {
         onClose={() => setPhoneChangeOpen(false)}
         onChanged={(newPhone) => {
           setPhone(newPhone)
+          setLastEdited(new Date().toISOString().slice(0, 19).replace('T', ' '))
           setPhoneChangeOpen(false)
         }}
       />
@@ -309,22 +370,32 @@ function PhoneVerifyPasswordModal({
 }) {
   const [password, setPassword] = useState('')
   const [checking, setChecking] = useState(false)
+  const [error, setError] = useState('')
 
   const handleNext = async () => {
     if (!password) return
     setChecking(true)
+    setError('')
     try {
-      await new Promise((r) => setTimeout(r, 400))
+      await api.verifyMyPassword({ current_pw: password })
       setPassword('')
       onVerified()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '비밀번호가 일치하지 않습니다.')
     } finally {
       setChecking(false)
     }
   }
 
+  const handleClose = () => {
+    setPassword('')
+    setError('')
+    onClose()
+  }
+
   return (
-    <Modal open={open} onClose={onClose} className="w-[512px]">
-      <ModalCloseButton onClose={onClose} />
+    <Modal open={open} onClose={handleClose} className="w-[512px]">
+      <ModalCloseButton onClose={handleClose} />
       <div className="px-[35px] pt-[78px] pb-[42px] flex flex-col min-h-[420px]">
         <div>
           <h2 className="text-[20px] font-bold text-[#2F2E2E]">비밀번호 확인</h2>
@@ -334,16 +405,17 @@ function PhoneVerifyPasswordModal({
           <input
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => { setPassword(e.target.value); setError('') }}
             onKeyDown={(e) => e.key === 'Enter' && handleNext()}
             placeholder="비밀번호를 입력해주세요."
             className="w-full h-[42px] px-[17px] border border-[#B1B1B1] rounded-[7px] text-[15px] mt-6 focus:outline-none focus:border-brand placeholder-[#C0C0C0]"
           />
+          {error && <p className="text-red-500 text-[13px] mt-2">{error}</p>}
         </div>
         <div className="mt-auto flex justify-center gap-[14px]">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="w-[125px] h-10 rounded-[5px] border border-[#005744] text-[#005744] text-[15px] font-medium hover:bg-surface-active transition"
           >
             취소
@@ -351,7 +423,7 @@ function PhoneVerifyPasswordModal({
           <button
             type="button"
             onClick={handleNext}
-            disabled={checking}
+            disabled={checking || !password}
             className="w-[125px] h-10 rounded-[5px] bg-[#005744] text-white text-[15px] font-medium hover:opacity-90 transition disabled:opacity-60"
           >
             {checking ? '확인 중…' : '다음'}
@@ -379,6 +451,8 @@ function PhoneChangeModal({
   const [sending, setSending] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [smsError, setSmsError] = useState('')
+  const [verifyError, setVerifyError] = useState('')
 
   useEffect(() => {
     if (!codeSent || codeVerified || timeLeft <= 0) return
@@ -395,10 +469,15 @@ function PhoneChangeModal({
   const handleSendCode = async () => {
     if (!phoneInput) return
     setSending(true)
+    setSmsError('')
     try {
-      await new Promise((r) => setTimeout(r, 400))
+      await api.authSendSms(phoneInput)
       setCodeSent(true)
       setTimeLeft(300)
+      setCodeInput('')
+      setCodeVerified(false)
+    } catch (e: unknown) {
+      setSmsError(e instanceof Error ? e.message : 'SMS 발송에 실패했습니다.')
     } finally {
       setSending(false)
     }
@@ -407,9 +486,12 @@ function PhoneChangeModal({
   const handleVerifyCode = async () => {
     if (!codeInput) return
     setVerifying(true)
+    setVerifyError('')
     try {
-      await new Promise((r) => setTimeout(r, 400))
+      await api.authVerifySms(phoneInput, codeInput)
       setCodeVerified(true)
+    } catch (e: unknown) {
+      setVerifyError(e instanceof Error ? e.message : '인증번호가 일치하지 않습니다.')
     } finally {
       setVerifying(false)
     }
@@ -419,8 +501,10 @@ function PhoneChangeModal({
     if (!codeVerified) return
     setSaving(true)
     try {
-      await new Promise((r) => setTimeout(r, 400))
+      await api.changeMyPhone(phoneInput)
       onChanged(phoneInput)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '전화번호 변경에 실패했습니다.')
     } finally {
       setSaving(false)
     }
@@ -432,6 +516,8 @@ function PhoneChangeModal({
     setCodeSent(false)
     setCodeVerified(false)
     setTimeLeft(300)
+    setSmsError('')
+    setVerifyError('')
     onClose()
   }
 
@@ -447,49 +533,52 @@ function PhoneChangeModal({
             <input
               type="tel"
               value={phoneInput}
-              onChange={(e) => setPhoneInput(e.target.value)}
+              onChange={(e) => { setPhoneInput(e.target.value); setSmsError('') }}
               placeholder="'-' 제외하고 숫자만 입력해주세요."
               className="w-[308px] h-[42px] px-[17px] border border-[#B1B1B1] rounded-[7px] text-[15px] focus:outline-none focus:border-brand placeholder-[#C0C0C0]"
             />
             <button
               type="button"
               onClick={handleSendCode}
-              disabled={sending}
+              disabled={sending || !phoneInput}
               className="flex-1 h-[42px] border border-[#005744] text-[#005744] rounded-[7px] text-[15px] font-medium hover:bg-surface-active transition disabled:opacity-60"
             >
-              {sending ? '발송 중…' : '인증번호 발송'}
+              {sending ? '발송 중…' : codeSent ? '재발송' : '인증번호 발송'}
             </button>
           </div>
+          {smsError && <p className="text-red-500 text-[13px] mt-1">{smsError}</p>}
 
           {/* 인증번호 입력 + 인증확인 */}
           <div className="flex gap-[12px] mt-[14px]">
             <input
               type="text"
               value={codeInput}
-              onChange={(e) => setCodeInput(e.target.value)}
+              onChange={(e) => { setCodeInput(e.target.value); setVerifyError('') }}
               placeholder="인증번호를 입력해주세요."
-              disabled={!codeSent}
+              disabled={!codeSent || codeVerified}
               className="w-[192px] h-[42px] px-[17px] border border-[#B1B1B1] rounded-[7px] text-[15px] focus:outline-none focus:border-brand placeholder-[#C0C0C0] disabled:bg-[#F5F5F5]"
             />
             <button
               type="button"
               onClick={handleVerifyCode}
-              disabled={!codeSent || verifying || codeVerified}
+              disabled={!codeSent || verifying || codeVerified || !codeInput}
               className="w-[104px] h-[42px] border border-[#005744] text-[#005744] rounded-[7px] text-[15px] font-medium hover:bg-surface-active transition disabled:opacity-40"
             >
               {codeVerified ? '확인됨' : verifying ? '확인 중…' : '인증확인'}
             </button>
           </div>
+          {verifyError && <p className="text-red-500 text-[13px] mt-1">{verifyError}</p>}
 
           {/* 타이머 */}
-          {codeSent && (
+          {codeSent && !codeVerified && (
             <div className="mt-[18px]">
               <div className="flex items-center gap-4 text-[15px] font-medium text-[#979797]">
-                <span>남은 시간 {formatTime(timeLeft)}</span>
+                <span className={timeLeft <= 60 ? 'text-red-500' : ''}>남은 시간 {formatTime(timeLeft)}</span>
                 <button
                   type="button"
-                  onClick={() => setTimeLeft(300)}
-                  className="hover:text-[#555] transition"
+                  onClick={handleSendCode}
+                  disabled={sending}
+                  className="hover:text-[#555] transition disabled:opacity-60"
                 >
                   시간연장
                 </button>
@@ -521,37 +610,49 @@ function PhoneChangeModal({
   )
 }
 
-function PasswordChangeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   const handleSave = async () => {
+    setError('')
     if (!current || !next || !confirm) {
-      alert('모든 항목을 입력해주세요.')
+      setError('모든 항목을 입력해주세요.')
       return
     }
     if (next !== confirm) {
-      alert('새 비밀번호가 일치하지 않습니다.')
+      setError('새 비밀번호가 일치하지 않습니다.')
       return
     }
     setSaving(true)
     try {
-      await new Promise((r) => setTimeout(r, 400))
-      alert('비밀번호가 변경되었습니다.')
+      await api.changeMyPassword({ current_pw: current, pw: next })
       setCurrent('')
       setNext('')
       setConfirm('')
+      onChanged()
       onClose()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '비밀번호 변경에 실패했습니다.')
     } finally {
       setSaving(false)
     }
   }
 
+  const handleClose = () => {
+    setCurrent('')
+    setNext('')
+    setConfirm('')
+    setError('')
+    onClose()
+  }
+
   return (
-    <Modal open={open} onClose={onClose} className="w-[535px]">
-      <ModalCloseButton onClose={onClose} />
+    <Modal open={open} onClose={handleClose} className="w-[535px]">
+      <ModalCloseButton onClose={handleClose} />
       <div className="px-[42px] pt-[37px] pb-8">
         <h2 className="text-[18px] font-semibold text-ink-900 mb-10">비밀번호 변경</h2>
 
@@ -560,7 +661,7 @@ function PasswordChangeModal({ open, onClose }: { open: boolean; onClose: () => 
           <input
             type="password"
             value={current}
-            onChange={(e) => setCurrent(e.target.value)}
+            onChange={(e) => { setCurrent(e.target.value); setError('') }}
             className="w-[318px] h-10 px-3 border border-[#4C4C4C] rounded-[5px] text-[15px] focus:outline-none focus:border-brand"
           />
         </div>
@@ -570,7 +671,7 @@ function PasswordChangeModal({ open, onClose }: { open: boolean; onClose: () => 
           <input
             type="password"
             value={next}
-            onChange={(e) => setNext(e.target.value)}
+            onChange={(e) => { setNext(e.target.value); setError('') }}
             className="w-[318px] h-10 px-3 border border-[#4C4C4C] rounded-[5px] text-[15px] focus:outline-none focus:border-brand"
           />
         </div>
@@ -587,15 +688,17 @@ function PasswordChangeModal({ open, onClose }: { open: boolean; onClose: () => 
           <input
             type="password"
             value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
+            onChange={(e) => { setConfirm(e.target.value); setError('') }}
             className="w-[318px] h-10 px-3 border border-[#4C4C4C] rounded-[5px] text-[15px] focus:outline-none focus:border-brand"
           />
         </div>
 
+        {error && <p className="text-red-500 text-[13px] mt-3 ml-[123px]">{error}</p>}
+
         <div className="mt-8 flex justify-center gap-4">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="w-[125px] h-[34px] rounded-[5px] border border-[#005744] text-[#005744] text-[15px] font-medium hover:bg-surface-active transition"
           >
             취소

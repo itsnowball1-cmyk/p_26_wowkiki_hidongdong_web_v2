@@ -20,6 +20,7 @@ type AuthValue = {
   user: CurrentUser | null
   login: (role: Role, id: string, password: string, autoLogin?: boolean) => Promise<{ ok: boolean; error?: string }>
   logout: () => void
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthValue | null>(null)
@@ -151,7 +152,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.hash = '#/login'
   }
 
-  return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>
+  const refreshUser = async () => {
+    try {
+      const dto = await api.me()
+      const updated: CurrentUser = {
+        id: dto.id, code: dto.code, name: dto.name, role: dto.role,
+        institutionCode: dto.institutionCode,
+        department: dto.department, schedule: dto.schedule,
+      }
+      const isAutoLogin = !!localStorage.getItem(AUTO_LOGIN_KEY)
+      saveUser(updated, isAutoLogin)
+      setUser(updated)
+    } catch {}
+  }
+
+  return <AuthContext.Provider value={{ user, login, logout, refreshUser }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

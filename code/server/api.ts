@@ -2680,6 +2680,101 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json({ items, total })
     }
 
+    // GET /api/mypage — 현재 사용자 프로필 상세 (phone, schedule, instName, updateDate)
+    if (path === '/api/mypage' && method === 'GET') {
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT phone, diag_days, update_date FROM tb_member WHERE idx = ? LIMIT 1`,
+        [user.idx]
+      )
+      const row = (rows[0] ?? {}) as { phone: string | null; diag_days: string | null; update_date: unknown }
+      let instName: string | null = null
+      try {
+        const [irows] = await conn.query<RowDataPacket[]>(
+          `SELECT inst_name FROM tb_institution WHERE code = ? LIMIT 1`,
+          [user.instt_code]
+        )
+        instName = (irows[0] as RowDataPacket & { inst_name: string })?.inst_name ?? null
+      } catch { /* tb_institution 없으면 건너뜀 */ }
+      if (!instName) {
+        try {
+          const [irows] = await conn.query<RowDataPacket[]>(
+            `SELECT name FROM tb_member WHERE instt_code = ? AND mtype = 'iadmin' AND delete_yn = 'N' LIMIT 1`,
+            [user.instt_code]
+          )
+          instName = (irows[0] as RowDataPacket & { name: string })?.name ?? null
+        } catch { /* 건너뜀 */ }
+      }
+      return json({
+        phone: row.phone ?? null,
+        diagDays: row.diag_days ?? null,
+        updateDate: fmtDateTime(row.update_date),
+        instName,
+      })
+    }
+
+    // PUT /api/mypage/profile — 이름, 소속 수정
+    if (path === '/api/mypage/profile' && method === 'PUT') {
+      const body = (await request.json().catch(() => ({}))) as { name?: string; department?: string }
+      const sets: string[] = []
+      const vals: unknown[] = []
+      if (body.name?.trim()) { sets.push('name = ?'); vals.push(body.name.trim()) }
+      if (body.department !== undefined) { sets.push('depart_code = ?'); vals.push(body.department || null) }
+      if (sets.length === 0) return err(400, '수정할 항목이 없습니다.')
+      sets.push('update_date = NOW()')
+      vals.push(user.idx)
+      await conn.query(`UPDATE tb_member SET ${sets.join(', ')} WHERE idx = ?`, vals)
+      return json({ ok: true })
+    }
+
+    // PUT /api/mypage/password — 비밀번호 변경
+    if (path === '/api/mypage/password' && method === 'PUT') {
+      const body = (await request.json().catch(() => ({}))) as { current_pw?: string; pw?: string }
+      if (!body.current_pw || !body.pw) return err(400, '필수 항목 누락')
+      const [[m]] = await conn.query<RowDataPacket[]>(
+        `SELECT pw FROM tb_member WHERE idx = ? LIMIT 1`, [user.idx]
+      ) as [RowDataPacket[], unknown]
+      if (!m || (m as RowDataPacket).pw !== body.current_pw) return err(400, '현재 비밀번호가 일치하지 않습니다.')
+      await conn.query(`UPDATE tb_member SET pw = ?, update_date = NOW() WHERE idx = ?`, [body.pw, user.idx])
+      return json({ ok: true })
+    }
+
+    // POST /api/mypage/verify-password — 휴대전화 변경 전 비밀번호 확인
+    if (path === '/api/mypage/verify-password' && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { current_pw?: string }
+      if (!body.current_pw) return err(400, '비밀번호를 입력해주세요.')
+      const [[m]] = await conn.query<RowDataPacket[]>(
+        `SELECT pw FROM tb_member WHERE idx = ? LIMIT 1`, [user.idx]
+      ) as [RowDataPacket[], unknown]
+      if (!m || (m as RowDataPacket).pw !== body.current_pw) return err(400, '비밀번호가 일치하지 않습니다.')
+      return json({ ok: true })
+    }
+
+    // PUT /api/mypage/phone — 휴대전화 변경 (SMS 인증 완료 후)
+    if (path === '/api/mypage/phone' && method === 'PUT') {
+      const body = (await request.json().catch(() => ({}))) as { phone?: string }
+      const phone = (body.phone ?? '').replace(/\D/g, '')
+      if (!phone || phone.length < 10) return err(400, '올바른 전화번호를 입력해주세요.')
+      const [vrows] = await conn.query<RowDataPacket[]>(
+        `SELECT id FROM tb_sms_verification WHERE phone = ? AND verified = 1 ORDER BY id DESC LIMIT 1`,
+        [phone]
+      )
+      if (!(vrows as RowDataPacket[]).length) return err(400, 'SMS 인증을 먼저 완료해주세요.')
+      await conn.query(`UPDATE tb_member SET phone = ?, update_date = NOW() WHERE idx = ?`, [phone, user.idx])
+      await conn.query(`DELETE FROM tb_sms_verification WHERE phone = ?`, [phone])
+      return json({ ok: true })
+    }
+
+    // PUT /api/mypage/schedule — 근무 일정 수정
+    if (path === '/api/mypage/schedule' && method === 'PUT') {
+      const body = (await request.json().catch(() => ({}))) as { diagDays?: string | null }
+      try {
+        await conn.query(`UPDATE tb_member SET diag_days = ?, update_date = NOW() WHERE idx = ?`, [body.diagDays ?? null, user.idx])
+      } catch {
+        return err(500, '스케줄 저장 중 오류가 발생했습니다.')
+      }
+      return json({ ok: true })
+    }
+
     // GET /api/me
     if (path === '/api/me' && method === 'GET') {
       const base = {

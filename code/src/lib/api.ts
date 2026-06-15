@@ -397,6 +397,13 @@ export type SupportListItem = {
   reply_date: string | null
 }
 
+export type MypageDto = {
+  phone: string | null
+  diagDays: string | null
+  updateDate: string | null
+  instName: string | null
+}
+
 export type SupportDetailDto = {
   cs_idx: number
   s_title: string
@@ -534,4 +541,19 @@ export const api = {
     apiFetch<{ id: number }>('/support', { method: 'POST', body: JSON.stringify(body) }),
   supportDetail: (id: number) => apiFetch<SupportDetailDto>(`/support/${id}`),
   supportCancel: (id: number) => apiFetch<{ ok: boolean }>(`/support/${id}`, { method: 'DELETE' }),
+  mypage: () => apiFetch<MypageDto>('/mypage'),
+  updateMyProfile: (body: { name?: string; department?: string }) =>
+    apiFetch<{ ok: boolean }>('/mypage/profile', { method: 'PUT', body: JSON.stringify(body) }),
+  changeMyPassword: (body: { current_pw: string; pw: string }) =>
+    apiFetch<{ ok: boolean }>('/mypage/password', { method: 'PUT', body: JSON.stringify(body) }),
+  verifyMyPassword: (body: { current_pw: string }) =>
+    apiFetch<{ ok: boolean }>('/mypage/verify-password', { method: 'POST', body: JSON.stringify(body) }),
+  authSendSms: (phone: string) =>
+    apiFetch<{ ok: boolean }>('/auth/send-sms', { method: 'POST', body: JSON.stringify({ phone }) }),
+  authVerifySms: (phone: string, code: string) =>
+    apiFetch<{ ok: boolean }>('/auth/verify-sms', { method: 'POST', body: JSON.stringify({ phone, code }) }),
+  changeMyPhone: (phone: string) =>
+    apiFetch<{ ok: boolean }>('/mypage/phone', { method: 'PUT', body: JSON.stringify({ phone }) }),
+  updateMySchedule: (diagDays: string | null) =>
+    apiFetch<{ ok: boolean }>('/mypage/schedule', { method: 'PUT', body: JSON.stringify({ diagDays }) }),
 }
