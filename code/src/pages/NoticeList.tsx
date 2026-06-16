@@ -8,6 +8,15 @@ import { api, type NoticeListItem } from '../lib/api'
 
 const PAGE_SIZE = 10
 
+const NOTICE_TYPE_MAP: Record<string, string> = {
+  '1': '전체 공지',
+  '2': '회원가입 반려',
+  '3': '서비스 안내',
+  '4': '시스템 점검',
+  '5': '업데이트',
+}
+const toNoticeLabel = (g: string) => NOTICE_TYPE_MAP[g] ?? g
+
 const CATEGORIES = ['전체공지', '서비스공지', '기능업데이트', '이용안내', '이벤트/소식']
 
 export default function NoticeList() {
@@ -112,7 +121,7 @@ export default function NoticeList() {
                     <td colSpan={5} className="h-[80px] text-center text-ink-400">등록된 공지사항이 없습니다.</td>
                   </tr>
                 )}
-                {!loading && items.map(item => (
+                {!loading && items.map((item, index) => (
                   <tr
                     key={item.BOARD_KEY}
                     onClick={() => go({ name: 'notice-detail', id: item.BOARD_KEY })}
@@ -122,10 +131,10 @@ export default function NoticeList() {
                       {item.BOARD_FIXED === 'Y' ? (
                         <span className="inline-block px-2 py-0.5 rounded text-[13px] font-semibold bg-brand text-white">고정</span>
                       ) : (
-                        <span className="text-ink-600">{item.BOARD_KEY}</span>
+                        <span className="text-ink-600">{total - (page - 1) * PAGE_SIZE - index}</span>
                       )}
                     </Td>
-                    <Td className="text-ink-600">{item.GUBUN || '-'}</Td>
+                    <Td className="text-ink-600">{item.GUBUN ? toNoticeLabel(item.GUBUN) : '-'}</Td>
                     <Td className="text-left px-4 text-ink-700">{item.BOARD_TITLE}</Td>
                     <Td className="text-ink-600">{item.reg_date}</Td>
                     <Td className="text-ink-600">{item.BOARD_READ_COUNT}</Td>

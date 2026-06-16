@@ -240,9 +240,11 @@ export type NoticeListDto = {
 
 export type NoticeAttachment = {
   BF_IDX: number
+  ATTACH_NM: string
   FILE_NM: string
   ATTACH_TYPE: string
   FILE_SIZE: number | null
+  FILE_DATA: string | null
 }
 
 export type NoticeDetailDto = {
@@ -537,7 +539,7 @@ export const api = {
     }),
   supportList: (from: string, to: string) =>
     apiFetch<{ items: SupportListItem[] }>(`/support?from=${from}&to=${to}`),
-  supportCreate: (body: { s_type: string; s_title: string; memo: string; files?: { name: string; size: number }[] }) =>
+  supportCreate: (body: { s_type: string; s_title: string; memo: string; files?: { name: string; size: number; data: string }[] }) =>
     apiFetch<{ id: number }>('/support', { method: 'POST', body: JSON.stringify(body) }),
   supportDetail: (id: number) => apiFetch<SupportDetailDto>(`/support/${id}`),
   supportCancel: (id: number) => apiFetch<{ ok: boolean }>(`/support/${id}`, { method: 'DELETE' }),

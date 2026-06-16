@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 
 const S_TYPE: Record<string, string> = {
@@ -7,10 +7,11 @@ const S_TYPE: Record<string, string> = {
 }
 
 const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
-const DL_HEADERS = { 'x-user-id': localStorage.getItem('hbd_user_id') ?? '' }
+const DL_HEADERS = { get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
 
 type CsFile = { sf_idx: number; file_nm: string; source_file_nm: string; file_size: number | null }
 type PendingFile = { id: string; name: string; size: number; data: string }
+type PreviewState = { url: string; name: string; mimeType: string }
 
 type CsDetail = {
   cs_idx: number
@@ -18,6 +19,7 @@ type CsDetail = {
   memo: string
   s_type: string
   email: string
+  phone: string | null
   name: string
   user_id: string
   regist_date: string
@@ -37,19 +39,16 @@ function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
-async function downloadCsFile(sfIdx: number, fallbackName: string) {
-  const res = await fetch(`/api/admin/cs/files/${sfIdx}`, { headers: DL_HEADERS })
-  if (!res.ok) { alert('다운로드 실패: 파일 데이터가 없습니다.'); return }
-  const d = await res.json() as { file_data?: string; source_file_nm?: string }
-  if (!d.file_data) { alert('파일 데이터가 없습니다.'); return }
-  const binary = atob(d.file_data)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  const blob = new Blob([bytes])
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = d.source_file_nm ?? fallbackName; a.click()
-  URL.revokeObjectURL(url)
+function getMimeType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? ''
+  const map: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    mp4: 'video/mp4', mp3: 'audio/mpeg',
+  }
+  return map[ext] ?? 'application/octet-stream'
 }
 
 export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (saved?: boolean) => void }) {
@@ -59,7 +58,10 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
   const [replyText, setReplyText] = useState('')
   const [mode, setMode] = useState<'view' | 'edit'>('view')
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
+  const [deletedFileIds, setDeletedFileIds] = useState<number[]>([])
   const [dragOver, setDragOver] = useState(false)
+  const [preview, setPreview] = useState<PreviewState | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -73,6 +75,45 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
       })
       .finally(() => setLoading(false))
   }, [idx])
+
+  useEffect(() => {
+    return () => { if (preview) URL.revokeObjectURL(preview.url) }
+  }, [preview])
+
+  const openPreview = async (sfIdx: number, filename: string) => {
+    setPreviewLoading(true)
+    try {
+      const res = await fetch(`/api/admin/cs/files/${sfIdx}`, { headers: DL_HEADERS })
+      if (!res.ok) throw new Error('파일을 불러올 수 없습니다.')
+      const d = await res.json() as { file_data?: string; source_file_nm?: string }
+      if (!d.file_data) throw new Error('파일 데이터가 없습니다.')
+      const name = d.source_file_nm ?? filename
+      const mimeType = getMimeType(name)
+      const binary = atob(d.file_data)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+      if (preview) URL.revokeObjectURL(preview.url)
+      setPreview({ url, name, mimeType })
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '파일을 불러오는 중 오류가 발생했습니다.')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const closePreview = () => {
+    if (preview) URL.revokeObjectURL(preview.url)
+    setPreview(null)
+  }
+
+  const downloadFromPreview = () => {
+    if (!preview) return
+    const a = document.createElement('a')
+    a.href = preview.url
+    a.download = preview.name
+    a.click()
+  }
 
   const handleFileSelect = async (files: FileList | File[]) => {
     const MAX = 10 * 1024 * 1024
@@ -97,11 +138,13 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
       body: JSON.stringify({
         reply_memo: replyText,
         answer_files: pendingFiles.map(f => ({ name: f.name, size: f.size, data: f.data })),
+        deleted_answer_file_ids: deletedFileIds,
       }),
     })
     setSaving(false)
     if (res.ok) {
       setPendingFiles([])
+      setDeletedFileIds([])
       setMode('view')
       onBack(true)
     } else {
@@ -112,6 +155,17 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
 
   const isAnswered = data?.reply_yn === 'Y'
   const showEditForm = !isAnswered || mode === 'edit'
+
+  const fileNameBtn = (sfIdx: number, name: string) => (
+    <button
+      type="button"
+      onClick={() => openPreview(sfIdx, name)}
+      disabled={previewLoading}
+      className="flex-1 text-left text-[14px] text-[#005744] hover:underline truncate disabled:opacity-60"
+    >
+      {name}
+    </button>
+  )
 
   return (
     <Layout title="1:1 문의사항">
@@ -134,7 +188,7 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
             <InfoRow3Col
               col1={{ label: '문의자 이름', value: data.name || '-' }}
               col2={{ label: '문의자 아이디', value: data.user_id || '-' }}
-              col3={{ label: '문의자 이메일', value: data.email || '-' }}
+              col3={{ label: '문의자 휴대폰번호', value: data.phone || '-' }}
             />
             <InfoRow3Col
               col1={{ label: '문의 날짜', value: data.regist_date }}
@@ -161,17 +215,10 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
                   {data.question_files.map(f => (
                     <li key={f.sf_idx} className="flex items-center gap-2 text-[14px] text-[#585858]">
                       <FileIcon />
-                      <span className="flex-1 truncate">{f.source_file_nm}</span>
+                      {fileNameBtn(f.sf_idx, f.source_file_nm)}
                       {f.file_size != null && (
                         <span className="text-[#AEAEAE] shrink-0">({(f.file_size / 1024).toFixed(1)} KB)</span>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => downloadCsFile(f.sf_idx, f.source_file_nm)}
-                        className="shrink-0 px-2 py-0.5 text-[12px] border border-[#005744] text-[#005744] rounded hover:bg-[#005744] hover:text-white transition-colors"
-                      >
-                        다운로드
-                      </button>
                     </li>
                   ))}
                 </ul>
@@ -195,6 +242,30 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
                 </FormRow>
                 <FormRow label="답변 파일첨부" tall last>
                   <div className="w-full space-y-2">
+                    {/* 기존 첨부파일 (미리보기 + 삭제 가능) */}
+                    {data.answer_files.filter(f => !deletedFileIds.includes(f.sf_idx)).length > 0 && (
+                      <ul className="space-y-1.5">
+                        {data.answer_files
+                          .filter(f => !deletedFileIds.includes(f.sf_idx))
+                          .map(f => (
+                            <li key={f.sf_idx} className="flex items-center gap-2 text-[14px] text-[#585858] bg-[#F5F5F5] border border-[#DEDEDE] rounded-[5px] px-3 h-[36px]">
+                              <FileIcon />
+                              {fileNameBtn(f.sf_idx, f.source_file_nm)}
+                              {f.file_size != null && (
+                                <span className="text-[#AEAEAE] shrink-0 text-[13px]">({(f.file_size / 1024).toFixed(1)} KB)</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setDeletedFileIds(prev => [...prev, f.sf_idx])}
+                                className="shrink-0 text-[#AAAAAA] hover:text-[#FF4646] transition-colors text-[16px] leading-none"
+                                title="파일 삭제"
+                              >
+                                ×
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    )}
                     {/* 드래그&드롭 영역 */}
                     <div
                       className={`border-2 border-dashed rounded-[5px] transition-colors ${dragOver ? 'border-[#005744] bg-[#f0f9f6]' : 'border-[#CCCCCC]'}`}
@@ -220,7 +291,7 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
                       className="hidden"
                       onChange={e => { if (e.target.files) handleFileSelect(e.target.files); e.target.value = '' }}
                     />
-                    {/* 추가할 파일 목록 */}
+                    {/* 새로 추가할 파일 목록 */}
                     {pendingFiles.length > 0 && (
                       <ul className="space-y-1.5">
                         {pendingFiles.map(f => (
@@ -253,17 +324,10 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
                       {data.answer_files.map(f => (
                         <li key={f.sf_idx} className="flex items-center gap-2 text-[14px] text-[#585858]">
                           <FileIcon />
-                          <span className="flex-1 truncate">{f.source_file_nm}</span>
+                          {fileNameBtn(f.sf_idx, f.source_file_nm)}
                           {f.file_size != null && (
                             <span className="text-[#AEAEAE] shrink-0">({(f.file_size / 1024).toFixed(1)} KB)</span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => downloadCsFile(f.sf_idx, f.source_file_nm)}
-                            className="shrink-0 px-2 py-0.5 text-[12px] border border-[#005744] text-[#005744] rounded hover:bg-[#005744] hover:text-white transition-colors"
-                          >
-                            다운로드
-                          </button>
                         </li>
                       ))}
                     </ul>
@@ -289,7 +353,7 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setPendingFiles([]); onBack() }}
+                  onClick={() => { setPendingFiles([]); setDeletedFileIds([]); onBack() }}
                   className="w-[220px] h-[58px] border border-[#005744] text-[#005744] text-[18px] font-semibold rounded-[10px] hover:bg-[#005744] hover:text-white transition-colors"
                 >
                   취소
@@ -326,7 +390,7 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setPendingFiles([]); setReplyText(data.reply_memo ?? ''); setMode('view') }}
+                  onClick={() => { setPendingFiles([]); setDeletedFileIds([]); setReplyText(data.reply_memo ?? ''); setMode('view') }}
                   className="w-[220px] h-[58px] border border-[#005744] text-[#005744] text-[18px] font-semibold rounded-[10px] hover:bg-[#005744] hover:text-white transition-colors"
                 >
                   취소
@@ -336,7 +400,97 @@ export default function CsDetailPage({ idx, onBack }: { idx: number; onBack: (sa
           </div>
         </>
       )}
+
+      {/* 파일 미리보기 모달 */}
+      {preview && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={closePreview}
+        >
+          <div
+            className="bg-white rounded-[12px] flex flex-col overflow-hidden shadow-2xl"
+            style={{ maxWidth: '90vw', maxHeight: '90vh', minWidth: 320 }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#DEDEDE] shrink-0">
+              <span className="text-[14px] font-medium text-[#272727] truncate max-w-[60vw]">
+                {preview.name}
+              </span>
+              <div className="flex items-center gap-2 ml-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={downloadFromPreview}
+                  className="h-8 px-3 flex items-center gap-1.5 border border-[#005744] text-[#005744] text-[13px] rounded-[5px] hover:bg-[#005744] hover:text-white transition-colors"
+                >
+                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6.5 1v7M4 5.5l2.5 2.5 2.5-2.5M1 11h11" />
+                  </svg>
+                  다운로드
+                </button>
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="w-8 h-8 flex items-center justify-center text-[#AEAEAE] hover:text-[#272727] hover:bg-[#F0F0F0] rounded-[5px] transition-colors"
+                  aria-label="닫기"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M3 3l10 10M13 3 3 13" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* 본문 */}
+            <div className="overflow-auto flex-1 flex items-center justify-center p-4 bg-[#F7F7F7]">
+              {preview.mimeType.startsWith('image/') ? (
+                <img
+                  src={preview.url}
+                  alt={preview.name}
+                  className="max-w-full max-h-[75vh] object-contain rounded shadow"
+                />
+              ) : preview.mimeType === 'application/pdf' ? (
+                <iframe
+                  src={preview.url}
+                  title={preview.name}
+                  className="w-[75vw] h-[75vh] rounded shadow border-0"
+                />
+              ) : preview.mimeType === 'text/plain' ? (
+                <TextPreview url={preview.url} />
+              ) : (
+                <div className="text-center py-12 space-y-4">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#B1B1B1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" /><path d="M12 18v-6" /><path d="M9 15l3 3 3-3" />
+                  </svg>
+                  <p className="text-[14px] text-[#AEAEAE]">이 파일 형식은 미리보기를 지원하지 않습니다.</p>
+                  <button
+                    type="button"
+                    onClick={downloadFromPreview}
+                    className="h-10 px-6 bg-[#005744] text-white text-[14px] font-medium rounded-[5px] hover:bg-[#004535] transition-colors"
+                  >
+                    파일 다운로드
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
+  )
+}
+
+function TextPreview({ url }: { url: string }) {
+  const [text, setText] = useState<string | null>(null)
+  useEffect(() => {
+    fetch(url).then(r => r.text()).then(setText).catch(() => setText('파일을 읽을 수 없습니다.'))
+  }, [url])
+  if (text === null) return <div className="text-[#AEAEAE] text-[14px]">불러오는 중...</div>
+  return (
+    <pre className="w-[70vw] max-h-[70vh] overflow-auto text-[13px] text-[#585858] whitespace-pre-wrap bg-white rounded shadow p-4 border border-[#DEDEDE]">
+      {text}
+    </pre>
   )
 }
 

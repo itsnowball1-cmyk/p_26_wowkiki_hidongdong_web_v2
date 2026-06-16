@@ -204,7 +204,6 @@ export default function MyPage() {
                 </button>
               </div>
             </Cell>
-            <Cell label="" empty />
           </div>
 
           {/* 근무 일정 헤더 */}
@@ -309,10 +308,9 @@ export default function MyPage() {
       <PhoneChangeModal
         open={phoneChangeOpen}
         onClose={() => setPhoneChangeOpen(false)}
-        onChanged={(newPhone) => {
-          setPhone(newPhone)
-          setLastEdited(new Date().toISOString().slice(0, 19).replace('T', ' '))
+        onChanged={() => {
           setPhoneChangeOpen(false)
+          loadMypage()
         }}
       />
     </div>
@@ -380,8 +378,8 @@ function PhoneVerifyPasswordModal({
       await api.verifyMyPassword({ current_pw: password })
       setPassword('')
       onVerified()
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '비밀번호가 일치하지 않습니다.')
+    } catch {
+      setError('비밀번호가 일치하지 않습니다.')
     } finally {
       setChecking(false)
     }
@@ -441,7 +439,7 @@ function PhoneChangeModal({
 }: {
   open: boolean
   onClose: () => void
-  onChanged: (newPhone: string) => void
+  onChanged: () => void
 }) {
   const [phoneInput, setPhoneInput] = useState('')
   const [codeInput, setCodeInput] = useState('')
@@ -502,7 +500,7 @@ function PhoneChangeModal({
     setSaving(true)
     try {
       await api.changeMyPhone(phoneInput)
-      onChanged(phoneInput)
+      onChanged()
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : '전화번호 변경에 실패했습니다.')
     } finally {
@@ -583,8 +581,7 @@ function PhoneChangeModal({
                   시간연장
                 </button>
               </div>
-              <div className="mt-[27px] border-t border-[#979797] w-[48px]" />
-            </div>
+              </div>
           )}
         </div>
 
@@ -610,23 +607,27 @@ function PhoneChangeModal({
   )
 }
 
+function validatePassword(pw: string) {
+  const lengthOk = pw.length >= 10 && pw.length <= 16
+  const categories = [/[A-Z]/.test(pw), /[a-z]/.test(pw), /[0-9]/.test(pw), /[^A-Za-z0-9]/.test(pw)].filter(Boolean).length
+  return { valid: lengthOk && categories >= 2, lengthOk, comboOk: categories >= 2 }
+}
+
 function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [currentPwError, setCurrentPwError] = useState('')
+
+  const pwValidation = validatePassword(next)
+  const constraintFailed = next.length > 0 && !pwValidation.valid
+  const mismatch = confirm.length > 0 && next !== confirm
 
   const handleSave = async () => {
-    setError('')
-    if (!current || !next || !confirm) {
-      setError('모든 항목을 입력해주세요.')
-      return
-    }
-    if (next !== confirm) {
-      setError('새 비밀번호가 일치하지 않습니다.')
-      return
-    }
+    setCurrentPwError('')
+    if (!current || !next || !confirm) return
+    if (!pwValidation.valid || mismatch) return
     setSaving(true)
     try {
       await api.changeMyPassword({ current_pw: current, pw: next })
@@ -635,8 +636,8 @@ function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onCl
       setConfirm('')
       onChanged()
       onClose()
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '비밀번호 변경에 실패했습니다.')
+    } catch {
+      setCurrentPwError('기존 비밀번호가 일치하지 않습니다.')
     } finally {
       setSaving(false)
     }
@@ -646,7 +647,7 @@ function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onCl
     setCurrent('')
     setNext('')
     setConfirm('')
-    setError('')
+    setCurrentPwError('')
     onClose()
   }
 
@@ -661,24 +662,25 @@ function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onCl
           <input
             type="password"
             value={current}
-            onChange={(e) => { setCurrent(e.target.value); setError('') }}
+            onChange={(e) => { setCurrent(e.target.value); setCurrentPwError('') }}
             className="w-[318px] h-10 px-3 border border-[#4C4C4C] rounded-[5px] text-[15px] focus:outline-none focus:border-brand"
           />
         </div>
+        {currentPwError && <p className="text-red-500 text-[13px] mt-1 ml-[123px]">{currentPwError}</p>}
 
         <div className="flex items-center mt-4">
           <span className="w-[123px] shrink-0 text-[15px] font-medium text-ink-900">새 비밀번호</span>
           <input
             type="password"
             value={next}
-            onChange={(e) => { setNext(e.target.value); setError('') }}
+            onChange={(e) => setNext(e.target.value)}
             className="w-[318px] h-10 px-3 border border-[#4C4C4C] rounded-[5px] text-[15px] focus:outline-none focus:border-brand"
           />
         </div>
 
         <div className="flex mt-[7px]">
           <div className="w-[123px] shrink-0" />
-          <p className="text-[10px] font-medium text-[#B1B1B1]">
+          <p className={`text-[10px] font-medium ${constraintFailed ? 'text-red-500' : 'text-[#B1B1B1]'}`}>
             (영문 대소문자/숫자/특수문자 중 2가지 이상 조합, 10자~16자 사이)
           </p>
         </div>
@@ -688,12 +690,11 @@ function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onCl
           <input
             type="password"
             value={confirm}
-            onChange={(e) => { setConfirm(e.target.value); setError('') }}
+            onChange={(e) => setConfirm(e.target.value)}
             className="w-[318px] h-10 px-3 border border-[#4C4C4C] rounded-[5px] text-[15px] focus:outline-none focus:border-brand"
           />
         </div>
-
-        {error && <p className="text-red-500 text-[13px] mt-3 ml-[123px]">{error}</p>}
+        {mismatch && <p className="text-red-500 text-[13px] mt-1 ml-[123px]">새 비밀번호와 비밀번호 확인이 일치하지 않습니다.</p>}
 
         <div className="mt-8 flex justify-center gap-4">
           <button

@@ -26,6 +26,7 @@ export default function SupportNew() {
   const [dragging, setDragging] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [toast, setToast] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = (incoming: FileList | null) => {
@@ -55,9 +56,17 @@ export default function SupportNew() {
     setError('')
     setSubmitting(true)
     try {
-      const fileMeta = files.map(f => ({ name: f.name, size: f.size }))
+      const toBase64 = (f: File): Promise<string> =>
+        new Promise((res, rej) => {
+          const r = new FileReader()
+          r.onload = () => res((r.result as string).split(',')[1])
+          r.onerror = rej
+          r.readAsDataURL(f)
+        })
+      const fileMeta = await Promise.all(files.map(async f => ({ name: f.name, size: f.size, data: await toBase64(f) })))
       await api.supportCreate({ s_type: sType, s_title: title, memo, files: fileMeta })
-      go({ name: 'support-list' })
+      setToast(true)
+      setTimeout(() => go({ name: 'support-list' }), 1500)
     } catch (e) {
       setError(e instanceof Error ? e.message : '오류가 발생했습니다.')
       setSubmitting(false)
@@ -202,6 +211,11 @@ export default function SupportNew() {
         <TopBar />
         <main className="flex-1 px-6 lg:px-10 py-8">{content}</main>
       </div>
+      {toast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#222] text-white text-[14px] px-5 py-3 rounded-[8px] shadow-lg z-50">
+          문의가 등록되었습니다.
+        </div>
+      )}
     </div>
   )
 }

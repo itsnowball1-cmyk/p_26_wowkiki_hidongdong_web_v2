@@ -6,6 +6,15 @@ import { useRouter } from '../lib/router'
 import { useAuth } from '../lib/auth'
 import { api, type NoticeDetailDto } from '../lib/api'
 
+const NOTICE_TYPE_MAP: Record<string, string> = {
+  '1': '전체 공지',
+  '2': '회원가입 반려',
+  '3': '서비스 안내',
+  '4': '시스템 점검',
+  '5': '업데이트',
+}
+const toNoticeLabel = (g: string) => NOTICE_TYPE_MAP[g] ?? g
+
 export default function NoticeDetail({ id }: { id: number }) {
   const { go } = useRouter()
   const { user } = useAuth()
@@ -59,7 +68,7 @@ export default function NoticeDetail({ id }: { id: number }) {
               <h1 className="text-[20px] font-bold mb-4 text-ink-900">{notice.BOARD_TITLE}</h1>
 
               <div className="border border-line rounded-[5px] px-6 py-3 mb-3 flex items-center gap-8 text-[14px] text-ink-600 bg-surface-card">
-                <span>유형 <span className="ml-2 font-medium text-ink-800">{notice.GUBUN || '-'}</span></span>
+                <span>유형 <span className="ml-2 font-medium text-ink-800">{notice.GUBUN ? toNoticeLabel(notice.GUBUN) : '-'}</span></span>
                 <span>등록일 <span className="ml-2 font-medium text-ink-800">{notice.reg_date}</span></span>
                 <span>조회수 <span className="ml-2 font-medium text-ink-800">{notice.BOARD_READ_COUNT}</span></span>
               </div>
@@ -75,7 +84,20 @@ export default function NoticeDetail({ id }: { id: number }) {
                 ) : (
                   <div className="flex flex-col gap-1">
                     {notice.attachments.map(f => (
-                      <span key={f.BF_IDX} className="text-ink-700">{f.FILE_NM}</span>
+                      <button
+                        key={f.BF_IDX}
+                        type="button"
+                        onClick={() => {
+                          if (!f.FILE_DATA) return
+                          const a = document.createElement('a')
+                          a.href = `data:application/octet-stream;base64,${f.FILE_DATA}`
+                          a.download = f.ATTACH_NM || f.FILE_NM
+                          a.click()
+                        }}
+                        className="text-left text-brand underline hover:opacity-70 transition-opacity"
+                      >
+                        {f.ATTACH_NM || f.FILE_NM}
+                      </button>
                     ))}
                   </div>
                 )}

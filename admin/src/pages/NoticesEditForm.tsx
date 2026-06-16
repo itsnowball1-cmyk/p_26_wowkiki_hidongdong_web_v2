@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
 
 const HEADERS = { 'content-type': 'application/json', get ['x-user-id']() { return localStorage.getItem('hbd_user_id') ?? '' } }
@@ -31,6 +31,24 @@ export default function NoticesEditForm({ idx, onBack }: { idx: number; onBack: 
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [attachments, setAttachments] = useState<File[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files ?? [])
+    setAttachments(prev => [...prev, ...selected])
+    e.target.value = ''
+  }
+
+  const removeFile = (i: number) => setAttachments(prev => prev.filter((_, idx) => idx !== i))
+
+  const toBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve((reader.result as string).split(',')[1])
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
 
   useEffect(() => {
     fetch(`/api/admin/notices/${idx}`, { headers: HEADERS })
@@ -62,6 +80,9 @@ export default function NoticesEditForm({ idx, onBack }: { idx: number; onBack: 
     if (!form.title.trim()) { alert('제목을 입력해주세요.'); return }
     if (!form.content.trim()) { alert('내용을 입력해주세요.'); return }
     setSaving(true)
+    const files = await Promise.all(attachments.map(async f => ({
+      name: f.name, size: f.size, mime: f.type, data: await toBase64(f),
+    })))
     const res = await fetch(`/api/admin/notices/${idx}`, {
       method: 'PUT',
       headers: HEADERS,
@@ -72,6 +93,7 @@ export default function NoticesEditForm({ idx, onBack }: { idx: number; onBack: 
         title:        form.title,
         content:      form.content,
         status:       form.status,
+        files,
       }),
     })
     setSaving(false)
@@ -162,15 +184,26 @@ export default function NoticesEditForm({ idx, onBack }: { idx: number; onBack: 
               />
             </FormRow>
 
-            <FormRow label="파일첨부" height={65}>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  className="h-[34px] px-4 border border-[#B1B1B1] text-[15px] text-[#585858] rounded-[3px] hover:bg-[#F5F5F5] transition-colors"
-                >
-                  내PC
-                </button>
-                <span className="text-[14px] text-[#B5B5B5]">파일을 마우스로 끌어 오세요.</span>
+            <FormRow label="파일첨부" height={attachments.length > 0 ? undefined : 65}>
+              <div className="flex flex-col gap-2 py-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-[34px] px-4 border border-[#B1B1B1] text-[15px] text-[#585858] rounded-[3px] hover:bg-[#F5F5F5] transition-colors"
+                  >
+                    내PC
+                  </button>
+                  <span className="text-[14px] text-[#B5B5B5]">파일을 마우스로 끌어 오세요.</span>
+                  <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+                </div>
+                {attachments.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[14px] text-[#585858]">
+                    <span>{f.name}</span>
+                    <span className="text-[#B5B5B5]">({(f.size / 1024).toFixed(1)}KB)</span>
+                    <button type="button" onClick={() => removeFile(i)} className="text-[#B5B5B5] hover:text-red-500 text-[12px]">✕</button>
+                  </div>
+                ))}
               </div>
             </FormRow>
 
