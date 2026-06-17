@@ -208,7 +208,20 @@ export default function ScheduleNew() {
   const pickerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    api.assignedChildren().then(setChildren).catch(() => {})
+    api.assignedChildren().then(list => {
+      setChildren(list)
+      const raw = sessionStorage.getItem('schedule_prefill')
+      if (!raw) return
+      sessionStorage.removeItem('schedule_prefill')
+      try {
+        const p = JSON.parse(raw)
+        if (p.date)         setDate(new Date(p.date + 'T12:00:00'))
+        if (p.scheduleType) setScheduleType(p.scheduleType)
+        if (p.startTime)    setStartTime(p.startTime)
+        if (p.endTime)      setEndTime(p.endTime)
+        if (p.childId)      setSelectedChild(list.find(c => c.id === p.childId) ?? null)
+      } catch {}
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -259,10 +272,12 @@ export default function ScheduleNew() {
         }
         const st = cfg.allDay ? '0:00' : cfg.startTime
         const et = cfg.allDay ? '23:30' : cfg.endTime
+        const repeat_group_id = crypto.randomUUID()
         await Promise.all(dates.map(d => api.createSchedule({
           ...base,
           start_datetime: toDatetime(d, st),
-          end_datetime:   toDatetime(d, et)
+          end_datetime:   toDatetime(d, et),
+          repeat_group_id,
         })))
       }
       sessionStorage.setItem('schedule_toast', '일정 등록이 완료되었습니다.')

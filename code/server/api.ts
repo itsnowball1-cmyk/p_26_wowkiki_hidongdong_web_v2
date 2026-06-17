@@ -137,6 +137,20 @@ async function withConn<T>(env: Env, fn: (conn: Connection) => Promise<T>, opts:
   }
 }
 
+let _migrationDone = false
+async function ensureMigrations(conn: Connection) {
+  if (_migrationDone) return
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tb_schedule' AND COLUMN_NAME = 'repeat_group_id'`
+  )
+  if ((rows[0] as { cnt: number }).cnt === 0) {
+    await conn.query(`ALTER TABLE tb_schedule ADD COLUMN repeat_group_id VARCHAR(36) NULL DEFAULT NULL`)
+    await conn.query(`ALTER TABLE tb_schedule ADD INDEX idx_repeat_group (repeat_group_id)`)
+  }
+  _migrationDone = true
+}
+
 // ─── analysislog 파싱 헬퍼 ───────────────────────────────────────────────────
 
 const POS_LABEL: Record<string, string> = {
@@ -3493,9 +3507,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
     // POST /api/schedules
     if (path === '/api/schedules' && method === 'POST') {
+      await ensureMigrations(conn)
       const body = (await request.json().catch(() => ({}))) as {
         child_idx?: number; start_datetime?: string; end_datetime?: string
         doctor_code?: string; teacher_code?: string; schedule_type?: string
+        repeat_group_id?: string
       }
       if (!body.child_idx || !body.start_datetime || !body.end_datetime)
         return err(400, '필수 항목이 누락됐습니다.')
@@ -3507,10 +3523,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       if (!childRow) return err(404, '아동을 찾을 수 없습니다.')
       const [result] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_schedule
-           (child_id, schedule_type, start_date, end_date, instt_code, doctor_code, teacher_code, regist_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+           (child_id, schedule_type, start_date, end_date, instt_code, doctor_code, teacher_code, repeat_group_id, regist_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [childRow.id, body.schedule_type ?? '2', body.start_datetime, body.end_datetime,
-         user.instt_code, body.doctor_code ?? null, body.teacher_code ?? null]
+         user.instt_code, body.doctor_code ?? null, body.teacher_code ?? null, body.repeat_group_id ?? null]
       )
       return json({ id: result.insertId })
     }
@@ -3520,9 +3536,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
     if (scheduleIdMatch) {
       const sid = Number(scheduleIdMatch[1])
       if (method === 'GET') {
+        await ensureMigrations(conn)
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT s.schedule_id AS id,
                   s.schedule_type,
+                  s.repeat_group_id,
+                  CASE WHEN s.repeat_group_id IS NOT NULL
+                       THEN (SELECT COUNT(*) FROM tb_schedule WHERE repeat_group_id = s.repeat_group_id AND instt_code = s.instt_code)
+                       ELSE 1 END AS group_count,
                   c.idx         AS child_idx,
                   c.name        AS child_name,
                   c.id          AS child_member_id,
@@ -3546,6 +3567,21 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         return json(rows[0])
       }
       if (method === 'DELETE') {
+        const deleteAll = url.searchParams.get('all') === 'true'
+        if (deleteAll) {
+          const [grpRows] = await conn.query<RowDataPacket[]>(
+            `SELECT repeat_group_id FROM tb_schedule WHERE schedule_id = ? AND instt_code = ?`,
+            [sid, user.instt_code]
+          )
+          const groupId = (grpRows[0] as { repeat_group_id: string | null } | undefined)?.repeat_group_id
+          if (groupId) {
+            await conn.query(
+              `DELETE FROM tb_schedule WHERE repeat_group_id = ? AND instt_code = ?`,
+              [groupId, user.instt_code]
+            )
+            return json({ ok: true })
+          }
+        }
         const [result] = await conn.query<ResultSetHeader>(
           `DELETE FROM tb_schedule WHERE schedule_id = ? AND instt_code = ?`,
           [sid, user.instt_code]

@@ -54,6 +54,8 @@ export type ScheduleDetail = {
   teacher_code: string | null
   doctor_name: string | null
   therapist_name: string | null
+  repeat_group_id: string | null
+  group_count: number
 }
 
 export type UnassignedChild = {
@@ -480,10 +482,11 @@ export const api = {
   createSchedule: (body: {
     child_idx: number; start_datetime: string; end_datetime: string
     doctor_code?: string; teacher_code?: string; schedule_type?: string
+    repeat_group_id?: string
   }) => apiFetch<{ id: number }>('/schedules', { method: 'POST', body: JSON.stringify(body) }),
   scheduleDetail: (id: number) => apiFetch<ScheduleDetail>(`/schedules/${id}`),
-  deleteSchedule: (id: number) =>
-    apiFetch<{ ok: boolean }>(`/schedules/${id}`, { method: 'DELETE' }),
+  deleteSchedule: (id: number, all?: boolean) =>
+    apiFetch<{ ok: boolean }>(`/schedules/${id}${all ? '?all=true' : ''}`, { method: 'DELETE' }),
   treatmentDetail: (id: number) => apiFetch<TreatmentDetailDto>(`/treatments/${id}`),
   treatmentRecordings: (id: number) => apiFetch<RecordingItem[]>(`/treatments/${id}/recordings`),
   notices: (page: number, gubun: string, search: string) =>
