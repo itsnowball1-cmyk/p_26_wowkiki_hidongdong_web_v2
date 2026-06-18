@@ -2295,18 +2295,21 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND DATE(regist_date) = CURDATE()`
       ) as [RowDataPacket[], unknown]
       const [instRows] = await conn.query<RowDataPacket[]>(
-        `SELECT m.idx, m.instt_code, m.name AS contact_name, m.regist_date,
+        `SELECT MIN(m.idx) AS idx, m.instt_code, MIN(m.regist_date) AS regist_date,
                 COALESCE(i.name, m.instt_code) AS instt_name,
                 COALESCE(i.itype, '-') AS instt_type
          FROM tb_member m
          LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
-         WHERE m.mtype='iadmin' AND m.delete_yn='N' AND m.approval_status IS NULL
-         ORDER BY m.regist_date DESC`
+         WHERE m.delete_yn='N'
+           AND m.mtype IN ('iadmin','doctor','teacher')
+           AND (m.mtype != 'iadmin' OR m.approval_status IS NULL)
+         GROUP BY m.instt_code, i.name, i.itype
+         ORDER BY MIN(m.regist_date) DESC`
       ).catch(async () => {
         const [r] = await conn.query<RowDataPacket[]>(
-          `SELECT idx, instt_code, name AS instt_name, '-' AS instt_type, regist_date
-           FROM tb_member WHERE mtype='iadmin' AND delete_yn='N' AND approval_status IS NULL
-           ORDER BY regist_date DESC`
+          `SELECT MIN(idx) AS idx, instt_code, instt_code AS instt_name, '-' AS instt_type, MIN(regist_date) AS regist_date
+           FROM tb_member WHERE delete_yn='N' AND mtype IN ('iadmin','doctor','teacher')
+           GROUP BY instt_code ORDER BY MIN(regist_date) DESC`
         ); return r
       })
       return json({

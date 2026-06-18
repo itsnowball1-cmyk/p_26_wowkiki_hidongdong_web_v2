@@ -118,9 +118,9 @@ export default function DashboardPage() {
     <Layout title="대시보드">
       {/* ── KPI 카드 3개 ── */}
       <div className="grid grid-cols-3 gap-5 mb-5">
-        <KpiCard label="전체 기관 수"      value={loading ? '—' : (s?.total_institutions ?? 0).toLocaleString()} unit="곳" pct={pctChange(s?.new_web_this_month ?? 0, s?.new_web_last_month ?? 0)} />
-        <KpiCard label="전체 웹 유저"      value={loading ? '—' : (s?.total_web_users   ?? 0).toLocaleString()} unit="명" pct={pctChange(s?.new_web_this_month ?? 0, s?.new_web_last_month ?? 0)} />
-        <KpiCard label="전체 앱 아동 유저" value={loading ? '—' : (s?.total_app_users   ?? 0).toLocaleString()} unit="명" pct={pctChange(s?.new_app_this_month ?? 0, s?.new_app_last_month ?? 0)} />
+        <KpiCard label="전체 기관 수"      value={loading ? '—' : (s?.total_institutions ?? 0).toLocaleString()} unit="곳" pct={pctChange(s?.new_web_this_month ?? 0, s?.new_web_last_month ?? 0)} onClick={() => go({ name: 'institutions' })} />
+        <KpiCard label="전체 웹 유저"      value={loading ? '—' : (s?.total_web_users   ?? 0).toLocaleString()} unit="명" pct={pctChange(s?.new_web_this_month ?? 0, s?.new_web_last_month ?? 0)} onClick={() => go({ name: 'doctors' })} />
+        <KpiCard label="전체 앱 아동 유저" value={loading ? '—' : (s?.total_app_users   ?? 0).toLocaleString()} unit="명" pct={pctChange(s?.new_app_this_month ?? 0, s?.new_app_last_month ?? 0)} onClick={() => go({ name: 'children' })} />
       </div>
 
       {/* ── MAU 패널 2개 ── */}
@@ -274,12 +274,12 @@ export default function DashboardPage() {
 }
 
 /* ── KPI 카드 — 가로 한 줄 레이아웃, 회색 배경, 퍼센트 배지 ── */
-function KpiCard({ label, value, unit, pct }: {
-  label: string; value: string; unit: string; pct: number | null
+function KpiCard({ label, value, unit, pct, onClick }: {
+  label: string; value: string; unit: string; pct: number | null; onClick?: () => void
 }) {
   const up = (pct ?? 0) >= 0
   return (
-    <div className="bg-[#EAEAEA] rounded-[10px] px-6 h-[72px] flex items-center justify-between">
+    <div onClick={onClick} className={`bg-[#EAEAEA] rounded-[10px] px-6 h-[72px] flex items-center justify-between ${onClick ? 'cursor-pointer hover:bg-[#DCDCDC] transition-colors' : ''}`}>
       <span className="text-[15px] font-medium text-[#202020]">{label}</span>
       <div className="flex items-center gap-5">
         <div className="flex items-baseline gap-1">

@@ -441,14 +441,11 @@ export default function ChildCustomDetail({ id }: Props) {
               <div className="border-t border-line" />
               <div className="px-5 py-3 flex items-center gap-4 min-h-[44px]">
                 <span className="text-[13px] font-medium text-ink-700 shrink-0 w-[90px]">치료 방문 일정</span>
-                <div className="flex items-center gap-2">
-                  {detail?.schedule && detail.schedule.length > 0 ? (
-                    <><span className="text-ink-900">매주</span>
-                    {detail.schedule.map((d) => (
-                      <span key={d} className="inline-grid place-items-center w-[23px] h-[20px] rounded-[3px] bg-[#57987E] text-white text-[12px]">{d}</span>
-                    ))}</>
-                  ) : <span className="text-ink-400">-</span>}
-                </div>
+                <span className="text-ink-900">
+                  {detail?.schedule && detail.schedule.length > 0
+                    ? (nextScheduledDate(detail.schedule) ?? '-')
+                    : '-'}
+                </span>
               </div>
             </div>
 
@@ -994,6 +991,24 @@ function Select({ value, onChange, options }: { value: string; onChange: (v: str
       </svg>
     </div>
   )
+}
+
+function nextScheduledDate(schedule: string[]): string | null {
+  const DAY_MAP: Record<string, number> = { '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6 }
+  const DAY_LABEL = ['일', '월', '화', '수', '목', '금', '토']
+  const scheduledDows = new Set(schedule.map(d => DAY_MAP[d]).filter(n => n !== undefined))
+  if (scheduledDows.size === 0) return null
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  for (let i = 1; i <= 7; i++) {
+    const date = new Date(today); date.setDate(today.getDate() + i)
+    if (scheduledDows.has(date.getDay())) {
+      const y = date.getFullYear()
+      const m = String(date.getMonth() + 1).padStart(2, '0')
+      const d = String(date.getDate()).padStart(2, '0')
+      return `${y}.${m}.${d} (${DAY_LABEL[date.getDay()]})`
+    }
+  }
+  return null
 }
 
 function LargeOutlineButton({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
