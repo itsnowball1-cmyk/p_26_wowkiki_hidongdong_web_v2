@@ -175,7 +175,7 @@ export type CustomListItem = {
   last_diagnosis: string | null
 }
 
-export type WeakPhoneme = { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음' }
+export type WeakPhoneme = { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음'; is_target?: boolean }
 export type TrainingSetDto = {
   idx: number
   aim_joum: string
@@ -205,7 +205,7 @@ export type CustomDetailDto = {
   schedule: string[]
   current: { sound: string; by: string | null; at: string | null } | null
   reserved: null
-  diagnosis_rows: { pos: string; phoneme: string; type: string }[]
+  diagnosis_rows: { pos: string; phoneme: string; type: string; accuracy?: number | null }[]
   weak_phonemes: WeakPhoneme[]
   trainingset: TrainingSetDto | null
 }

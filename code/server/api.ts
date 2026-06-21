@@ -161,6 +161,35 @@ const POS_LABEL: Record<string, string> = {
   EOMAL_CHO: '어말초성', EOMAL_JUNG: '어말중성', EOMAL_JONG: '어말종성'
 }
 
+// 한글 단어 → (위치라벨|음소) 출현 목록 (자음 초성/종성 + 모음 중성 모두 포함).
+// 정확도(오류/출현) 계산 시 "출현 횟수" 집계에 사용. 위치 규칙은 e_list 의 pos 와 동일:
+//   초성: 첫 음절=어두초성 / 그 외=어중초성, 중성: 첫 음절=어두중성 / 그 외=어중중성,
+//   종성: 마지막 음절=어말종성 / 그 외=어중종성 (겹받침은 구성 자음으로 분해).
+const _OCC_ONSET = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ']
+const _OCC_NUC = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ']
+const _OCC_CODA = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ']
+const _OCC_CODA_SPLIT: Record<string, string[]> = {
+  'ㄳ':['ㄱ','ㅅ'],'ㄵ':['ㄴ','ㅈ'],'ㄶ':['ㄴ','ㅎ'],'ㄺ':['ㄹ','ㄱ'],'ㄻ':['ㄹ','ㅁ'],
+  'ㄼ':['ㄹ','ㅂ'],'ㄽ':['ㄹ','ㅅ'],'ㄾ':['ㄹ','ㅌ'],'ㄿ':['ㄹ','ㅍ'],'ㅀ':['ㄹ','ㅎ'],'ㅄ':['ㅂ','ㅅ']
+}
+function phonemeOccurrences(word: string): string[] {
+  const out: string[] = []
+  const sy = [...word].filter(ch => { const x = ch.codePointAt(0) ?? 0; return x >= 0xAC00 && x <= 0xD7A3 })
+  const n = sy.length
+  sy.forEach((s, i) => {
+    const idx = (s.codePointAt(0) as number) - 0xAC00
+    const o = Math.floor(idx / 588), nu = Math.floor((idx % 588) / 28), co = idx % 28
+    out.push(`${i === 0 ? '어두초성' : '어중초성'}|${_OCC_ONSET[o]}`)
+    out.push(`${i === 0 ? '어두중성' : '어중중성'}|${_OCC_NUC[nu]}`)
+    const coda = _OCC_CODA[co]
+    if (coda) {
+      const posLabel = i === n - 1 ? '어말종성' : '어중종성'
+      for (const cj of (_OCC_CODA_SPLIT[coda] ?? [coda])) out.push(`${posLabel}|${cj}`)
+    }
+  })
+  return out
+}
+
 function parseDuration(seconds: number | null | undefined): string | null {
   if (seconds == null || isNaN(seconds) || seconds < 0 || seconds > 7200) return null
   const s = Math.round(seconds)
@@ -3187,16 +3216,17 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const tp = train ? parseAnalysislog(train.analysislog) : null
 
       const [diagLogRows] = await conn.query<RowDataPacket[]>(
-        `SELECT analysislog
+        `SELECT idx, act_date, analysislog, speechlog
          FROM tb_childact_report
          WHERE id = ? AND use_type = 'diagnostic'
          ORDER BY act_date DESC, idx DESC LIMIT 1`,
         [child.child_member_id]
       )
-      const rawDiag = (diagLogRows[0] as { analysislog: string | null } | undefined)?.analysislog
-      const diagReport: { pos: string; phoneme: string; type: string }[] = []
+      const diagRec = diagLogRows[0] as { idx: number; act_date: unknown; analysislog: string | null; speechlog: string | null } | undefined
+      const rawDiag = diagRec?.analysislog
+      const diagReport: { pos: string; phoneme: string; type: string; accuracy?: number | null }[] = []
       // weak_phonemes: (pos, joum) 묶음으로 오류 빈도 집계 — UI 의 "취약한 발음" 후보
-      const weakMap = new Map<string, { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음' }>()
+      const weakMap = new Map<string, { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음'; is_target?: boolean }>()
       if (rawDiag) {
         try {
           const log = JSON.parse(rawDiag) as { mispronunciations?: MispronEntry[] }
@@ -3224,20 +3254,103 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           }
         } catch { /* analysislog parse 실패 무시 */ }
       }
-      // 취약 발음 후보 정렬 — 문서(치료단어 알고리즘 정리_김덕규.txt 라인 36-37):
-      //   "치료대상 자음음소 중 가장 습득하기 쉬운 자음음소"
-      //   "치료대상 자음음소의 위치가 어두초성에 있는 경우" 우선
-      // → 1순위: 발달 순위 오름차순 (쉬운 자음 먼저), 2순위: 어두초성 우선, 3순위: 빈도 내림차순
+      // ── 정확도 점수 (오류/출현) — "가장 최근 진단 + 그 이후 치료" 범주로 제한 ──
+      // 출현: 제시 단어를 음소 단위로 분해해 (위치|음소) 출현수 집계 (자음+모음)
+      // 오류: mispronunciations e_list 의 (위치|목표음소) 집계
+      // accuracy = 1 - 오류/출현 (높을수록 우선). 출현 0 + 오류>0 → 맨 뒤로.
+      const appearMap = new Map<string, number>()
+      const errMap = new Map<string, number>()
+      const accRecs: Array<{ analysislog: string | null; speechlog: string | null }> = []
+      if (diagRec) {
+        accRecs.push({ analysislog: diagRec.analysislog, speechlog: diagRec.speechlog })
+        // 최근 진단 이후(act_date 기준, 동일 시 idx)의 치료 기록만
+        const [trainAfter] = await conn.query<RowDataPacket[]>(
+          `SELECT analysislog, speechlog FROM tb_childact_report
+           WHERE id = ? AND use_type = 'training'
+             AND (act_date > ? OR (act_date = ? AND idx > ?))`,
+          [child.child_member_id, diagRec.act_date, diagRec.act_date, diagRec.idx]
+        )
+        for (const r of trainAfter as Array<{ analysislog: string | null; speechlog: string | null }>) accRecs.push(r)
+      }
+      for (const rec of accRecs) {
+        if (rec.speechlog) {
+          try {
+            // speechlog 포맷 2종 공존: 신형(wrd) / 구형(word). pron 은 양쪽 모두 존재.
+            const sp = JSON.parse(rec.speechlog) as { logLst?: Array<{ qzNth?: number; wrd?: string; word?: string; pron?: string }> }
+            const seen = new Set<number>()  // qzNth(제시 단위) 당 1회만 출현 집계
+            for (const e of sp.logLst ?? []) {
+              const q = e.qzNth ?? -1
+              if (seen.has(q)) continue
+              seen.add(q)
+              const w = e.pron ?? e.wrd ?? e.word ?? ''
+              for (const k of phonemeOccurrences(w)) appearMap.set(k, (appearMap.get(k) ?? 0) + 1)
+            }
+          } catch { /* skip */ }
+        }
+        if (rec.analysislog) {
+          try {
+            const log = JSON.parse(rec.analysislog) as { mispronunciations?: MispronEntry[] }
+            for (const m of log.mispronunciations ?? []) {
+              for (const e of m.e_list ?? []) {
+                const ph = errJoum(e); if (!ph) continue
+                const k = `${POS_LABEL[e.pos] ?? e.pos}|${ph}`
+                errMap.set(k, (errMap.get(k) ?? 0) + 1)
+              }
+            }
+          } catch { /* skip */ }
+        }
+      }
+      const accOf = (posLabel: string, phoneme: string): number => {
+        const k = `${posLabel}|${phoneme}`
+        const a = appearMap.get(k) ?? 0
+        const er = errMap.get(k) ?? 0
+        if (a > 0) return 1 - er / a
+        return er > 0 ? -1 : 1
+      }
+      // 표시용 정확도 % (출현 없으면 null → '-')
+      const accPctOf = (posLabel: string, phoneme: string): number | null => {
+        const k = `${posLabel}|${phoneme}`
+        const a = appearMap.get(k) ?? 0
+        if (a <= 0) return null
+        const er = errMap.get(k) ?? 0
+        return Math.round(Math.max(0, Math.min(1, 1 - er / a)) * 100)
+      }
+
+      // 진단 리포트: 각 오조음에 정확도 % 부여 + (오조음 중) 정확도 높은 조음부터 순차 정렬
+      for (const r of diagReport) r.accuracy = accPctOf(r.pos, r.phoneme)
+      diagReport.sort((a, b) => accOf(b.pos, b.phoneme) - accOf(a.pos, a.phoneme))
+
+      // 취약 발음 후보: 현재 학습 내용(최근 치료)의 목표 조음을 후보에 추가
+      let targetWeak: { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음'; is_target: true } | null = null
+      if (train?.analysislog) {
+        try {
+          const tlog = JSON.parse(train.analysislog) as { summary?: { aim_joum?: string; aim_pos?: string } }
+          const aj = tlog.summary?.aim_joum; const ap = tlog.summary?.aim_pos
+          if (aj && ap) {
+            const posLabel = POS_LABEL[ap] ?? ap
+            const cat: '자음' | '받침' | '모음' = /JONG$/.test(ap) ? '받침' : /JUNG$/.test(ap) ? '모음' : '자음'
+            const exist = weakMap.get(`${posLabel}|${aj}`)
+            if (exist) exist.is_target = true
+            else targetWeak = { pos: posLabel, phoneme: aj, count: errMap.get(`${posLabel}|${aj}`) ?? 0, category: cat, is_target: true }
+          }
+        } catch { /* skip */ }
+      }
+
+      // 취약 발음 후보 정렬 — 목표 조음을 맨 앞에 고정, 나머지는 정확도 내림차순(동률 시 발달순위/어두초성/빈도)
       const POS_PRIORITY: Record<string, number> = { '어두초성': 0, '어중초성': 1, '어중종성': 2, '어말종성': 3 }
-      const weak_phonemes = [...weakMap.values()]
-        .sort((a, b) => {
-          const da = developmentRank(a.phoneme); const db = developmentRank(b.phoneme)
-          if (da !== db) return da - db
-          const pa = POS_PRIORITY[a.pos] ?? 9; const pb = POS_PRIORITY[b.pos] ?? 9
-          if (pa !== pb) return pa - pb
-          return b.count - a.count
-        })
-        .slice(0, 12)
+      const weakArr = [...weakMap.values(), ...(targetWeak ? [targetWeak] : [])]
+      const targetItem = weakArr.find(w => w.is_target)
+      const restWeak = weakArr.filter(w => !w.is_target)
+      restWeak.sort((a, b) => {
+        const acc = accOf(b.pos, b.phoneme) - accOf(a.pos, a.phoneme)
+        if (Math.abs(acc) > 1e-9) return acc
+        const da = developmentRank(a.phoneme); const db = developmentRank(b.phoneme)
+        if (da !== db) return da - db
+        const pa = POS_PRIORITY[a.pos] ?? 9; const pb = POS_PRIORITY[b.pos] ?? 9
+        if (pa !== pb) return pa - pb
+        return b.count - a.count
+      })
+      const weak_phonemes = (targetItem ? [targetItem, ...restWeak] : restWeak).slice(0, 12)
 
       // 현재 저장된 trainingset 로드 (없으면 null)
       const [tsRows] = await conn.query<RowDataPacket[]>(

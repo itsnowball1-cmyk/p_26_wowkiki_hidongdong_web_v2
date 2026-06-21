@@ -34,6 +34,7 @@ export default function ChildCustomDetail({ id }: Props) {
   const [customWords, setCustomWords] = useState<string[]>([])
   const [addInput, setAddInput] = useState('')
   const [extracted, setExtracted] = useState(false)
+  const [diagOpen, setDiagOpen] = useState(false)   // 진단 리포트 접힘/펼침 (default 접힘)
   const [gameCount, setGameCount] = useState(10)
   const [extracting, setExtracting] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -112,9 +113,13 @@ export default function ChildCustomDetail({ id }: Props) {
         orderby_ewords_yn: custom.orderby_ewords_yn
       })
       const words = r.tr_words
-      setCustom(c => ({ ...c, coreword: r.coreword }))
-      setCoreWord(r.coreword || words[0] || null)
-      const after = words.filter(w => w !== r.coreword)
+      // 사용자가 핵심 단어를 입력해 두었으면 그것을 유지·적용한다.
+      // (원본 C# 은 항상 generatedWords[0] 로 덮어쓰지만, 여기서는 사용자가 지정한 핵심 단어를 우선)
+      const userCore = (custom.coreword ?? '').trim()
+      const core = userCore || r.coreword || words[0] || null
+      setCustom(c => ({ ...c, coreword: core ?? '' }))
+      setCoreWord(core)
+      const after = words.filter(w => w !== core)
       setTrainingList(after.slice(0, gameCount))
       setCandidateList(after.slice(gameCount))
       setCustomWords([])
@@ -126,6 +131,24 @@ export default function ChildCustomDetail({ id }: Props) {
       console.error(e); alert('단어 추출 실패')
     } finally {
       setExtracting(false)
+    }
+  }
+
+  // 게임 훈련 횟수 변경 → 훈련/후보 재배치.
+  // 전체 풀(훈련 + 후보)에서 앞에서부터 gameCount 개를 훈련에 채우고 나머지는 후보로 보낸다.
+  // 단어가 충분하면 설정값만큼 모두 훈련에 들어가고, 부족하면 ghost 로 전체 반복된다.
+  const handleGameCountChange = (n: number) => {
+    const next = Math.max(1, n)
+    setGameCount(next)
+    const pool = [...trainingList, ...candidateList]
+    if (pool.length === 0) return
+    setTrainingList(pool.slice(0, next))
+    const overflow = pool.slice(next)
+    // overflow 중 직접 추가(custom) 출신은 custom 목록으로 환원, 나머지는 후보로.
+    const backToCustom = overflow.filter(w => customOriginSet.current.has(w))
+    setCandidateList(overflow.filter(w => !customOriginSet.current.has(w)))
+    if (backToCustom.length > 0) {
+      setCustomWords(prev => [...backToCustom.filter(w => !prev.includes(w)), ...prev])
     }
   }
 
@@ -562,16 +585,30 @@ export default function ChildCustomDetail({ id }: Props) {
             </div>
           </div>
 
-          {/* 진단 리포트 */}
+          {/* 진단 리포트 — 접힘/펼침 (default 접힘) */}
           <section>
-            <h3 className="text-[18px] font-semibold text-ink-900 mb-2">진단 리포트</h3>
+            <button type="button" onClick={() => setDiagOpen(o => !o)}
+              className="flex items-center gap-2 mb-2 select-none">
+              <h3 className="text-[18px] font-semibold text-ink-900">진단 리포트</h3>
+              {(detail?.diagnosis_rows?.length ?? 0) > 0 && (
+                <span className="text-[18px] text-ink-400">{detail!.diagnosis_rows.length}</span>
+              )}
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                className={`text-ink-500 transition-transform ${diagOpen ? 'rotate-180' : ''}`}>
+                <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {diagOpen && (
             <div className="bg-surface-card border border-line rounded-[10px] overflow-hidden relative">
               <div className="absolute top-0 right-0 w-16 h-16 bg-[#57987E]" style={{ clipPath: 'polygon(100% 0, 100% 100%, 0 0)' }} />
               <table className="w-full text-[14px]">
                 <thead>
                   <tr className="bg-line-soft border-b border-line">
                     <th className="h-[37px] px-6 text-left font-medium text-ink-700 w-[33%]">오조음소</th>
-                    <th className="h-[37px] px-6 text-left font-medium text-ink-700 w-[33%]">위치</th>
+                    <th className="h-[37px] px-6 text-left font-medium text-ink-700 w-[33%]">
+                      <span className="inline-block w-[96px]">위치</span>
+                      <span>정확도</span>
+                    </th>
                     <th className="h-[37px] px-6 text-left font-medium text-ink-700">종류</th>
                   </tr>
                 </thead>
@@ -579,10 +616,13 @@ export default function ChildCustomDetail({ id }: Props) {
                   {(detail?.diagnosis_rows ?? []).length === 0 && (
                     <tr><td colSpan={3} className="h-[47px] px-6 text-ink-400 text-[13px]">진단 데이터 없음</td></tr>
                   )}
-                  {(detail?.diagnosis_rows ?? []).map(({ pos, phoneme, type }, i) => (
+                  {(detail?.diagnosis_rows ?? []).map(({ pos, phoneme, type, accuracy }, i) => (
                     <tr key={i} className="border-b border-line last:border-b-0">
                       <td className="h-[47px] px-6 text-ink-900">{phoneme}</td>
-                      <td className="h-[47px] px-6 text-ink-900">{pos}</td>
+                      <td className="h-[47px] px-6 text-ink-900">
+                        <span className="inline-block w-[96px]">{pos}</span>
+                        <span className="text-[13px] text-ink-400">{accuracy != null ? `${accuracy}%` : '-'}</span>
+                      </td>
                       <td className="h-[47px] px-6">
                         <span className={`text-[12px] px-2 py-0.5 rounded font-medium ${type === 'CHANGE' ? 'bg-tag-blue text-ink-700' : 'bg-tag-pink text-ink-700'}`}>{type}</span>
                       </td>
@@ -591,6 +631,7 @@ export default function ChildCustomDetail({ id }: Props) {
                 </tbody>
               </table>
             </div>
+            )}
           </section>
 
           {/* 치료 단어 설정 */}
@@ -610,8 +651,13 @@ export default function ChildCustomDetail({ id }: Props) {
                           'inline-flex items-center gap-2 h-9 px-3 rounded-[10px] border text-[13px] transition',
                           active
                             ? 'border-[#005744] bg-[#005744] text-white'
-                            : 'border-line bg-white text-ink-900 hover:border-[#005744]'
+                            : w.is_target
+                              ? 'border-[#005744] bg-white text-ink-900 hover:bg-[#F0F7F4]'
+                              : 'border-line bg-white text-ink-900 hover:border-[#005744]'
                         ].join(' ')}>
+                        {w.is_target && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${active ? 'bg-white/25 text-white' : 'bg-[#005744] text-white'}`}>목표</span>
+                        )}
                         <span className="font-bold">{w.phoneme}</span>
                         <span className="opacity-80">{w.category}</span>
                         <span className="opacity-60 text-[11px]">{w.pos}</span>
@@ -649,7 +695,7 @@ export default function ChildCustomDetail({ id }: Props) {
 
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-[20px] font-bold text-ink-900">추출된 단어 보기</h3>
-              <GameTrainingCount value={gameCount} onChange={setGameCount} />
+              <GameTrainingCount value={gameCount} onChange={handleGameCountChange} />
             </div>
 
             {/* ── Word panel ──────────────────────────────────────────────── */}
@@ -976,11 +1022,12 @@ function CheckboxBox({ checked, onChange }: { checked: boolean; onChange: () => 
 /* ---------------------------------- */
 /* 단어 필터 panel                     */
 /* ---------------------------------- */
+// 값은 서버 enum(joum_growth.ts)과 일치: WANSEONG=0, SOOKDAL=1, GWANSEB=2, APPEAR=3
 const GROWTH_GRADE_OPTIONS = [
-  { value: 1, label: '완전습득' },
-  { value: 2, label: '숙달' },
-  { value: 3, label: '관습적' },
-  { value: 4, label: '출현' }
+  { value: 0, label: '완전습득' },
+  { value: 1, label: '숙달' },
+  { value: 2, label: '관습적' },
+  { value: 3, label: '출현' }
 ]
 const WORD_LENGTH_OPTIONS = ['1', '2', '3', '4', '5']
 const AGE_MIN_BOUND = 1
