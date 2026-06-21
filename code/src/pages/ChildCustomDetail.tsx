@@ -6,15 +6,28 @@ import { api, type CustomDetailDto } from '../lib/api'
 type Props = { id: number }
 type Section = 'candidate' | 'custom'
 
-const DEFAULT_WORDS = [
-  '고릴라', '금반지', '굼뱅이', '군만두', '고구마맛탕', '곰팡이', '가로', '고모부',
-  '거북이', '강아지', '고양이', '구급차', '국자', '귀', '까치', '꽃',
-  '김밥', '김치', '꼬리', '고래', '곰', '과자', '구두', '글씨',
-  '가위', '가족', '가지', '거미', '건전지'
-]
+// 목표조음/필터 state — TrainingSetDto 형상에 맞춰 top-level 관리.
+// 저장 시 그대로 PUT 페이로드가 됨.
+type CustomState = {
+  idx: number | null
+  aim_joum: string; pos: string; coreword: string
+  suit_age: number; growth_grade: number
+  is_ojoum_del_yn: 'Y' | 'N'; is_only_noun_yn: 'Y' | 'N'; is_cvcword_del_yn: 'Y' | 'N'
+  min_len: number; max_len: number
+  can_read_yn: 'Y' | 'N'
+  orderby_evowels_yn: 'Y' | 'N'; orderby_ewords_yn: 'Y' | 'N'
+}
+const DEFAULT_CUSTOM: CustomState = {
+  idx: null, aim_joum: 'ㄱ', pos: '어두초성', coreword: '',
+  suit_age: 5, growth_grade: 1,
+  is_ojoum_del_yn: 'N', is_only_noun_yn: 'Y', is_cvcword_del_yn: 'Y',
+  min_len: 2, max_len: 3, can_read_yn: 'N',
+  orderby_evowels_yn: 'N', orderby_ewords_yn: 'Y'
+}
 
 export default function ChildCustomDetail({ id }: Props) {
   const [detail, setDetail] = useState<CustomDetailDto | null>(null)
+  const [custom, setCustom] = useState<CustomState>(DEFAULT_CUSTOM)
   const [coreWord, setCoreWord] = useState<string | null>(null)
   const [trainingList, setTrainingList] = useState<string[]>([])
   const [candidateList, setCandidateList] = useState<string[]>([])
@@ -22,10 +35,8 @@ export default function ChildCustomDetail({ id }: Props) {
   const [addInput, setAddInput] = useState('')
   const [extracted, setExtracted] = useState(false)
   const [gameCount, setGameCount] = useState(10)
-  const [filterOptions, setFilterOptions] = useState<Record<string, boolean>>({
-    properAge: true, canRead: true, wordLength: false,
-    removeClosed: true, removeNonNoun: false, ageAcquired: true, removeMispronounced: true
-  })
+  const [extracting, setExtracting] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   // training DnD
   const [trainDragIdx, setTrainDragIdx] = useState<number | null>(null)
@@ -45,7 +56,34 @@ export default function ChildCustomDetail({ id }: Props) {
   const [flashWords, setFlashWords] = useState<string[]>([])
 
   useEffect(() => {
-    api.customDetail(id).then(setDetail).catch(() => {})
+    api.customDetail(id).then(d => {
+      setDetail(d)
+      // 저장된 trainingset 이 있으면 그것으로 초기화 (client app 의 LoadTrainingSet 응답에 해당)
+      if (d.trainingset) {
+        const t = d.trainingset
+        setCustom({
+          idx: t.idx, aim_joum: t.aim_joum, pos: t.pos, coreword: t.coreword,
+          suit_age: t.suit_age, growth_grade: t.growth_grade,
+          is_ojoum_del_yn: (t.is_ojoum_del_yn as 'Y' | 'N') ?? 'N',
+          is_only_noun_yn: (t.is_only_noun_yn as 'Y' | 'N') ?? 'Y',
+          is_cvcword_del_yn: (t.is_cvcword_del_yn as 'Y' | 'N') ?? 'Y',
+          min_len: t.min_len, max_len: t.max_len,
+          can_read_yn: (t.can_read_yn as 'Y' | 'N') ?? 'N',
+          orderby_evowels_yn: (t.orderby_evowels_yn as 'Y' | 'N') ?? 'N',
+          orderby_ewords_yn: (t.orderby_ewords_yn as 'Y' | 'N') ?? 'Y'
+        })
+        setCoreWord(t.coreword || (t.tr_words[0] ?? null))
+        // coreword 는 chip 으로 따로 표시되므로 tr_words 에서 제외하고 훈련 목록 + 후보로 분할
+        const remaining = t.tr_words.filter(w => w !== t.coreword)
+        const tcount = Math.min(gameCount, remaining.length)
+        setTrainingList(remaining.slice(0, tcount))
+        setCandidateList(remaining.slice(tcount))
+        setCustomWords([])
+        setExtracted(true)
+      }
+    }).catch(() => {})
+    // gameCount 는 의도적으로 deps 제외 — 초기 로드 시점 값만 사용
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
   useEffect(() => {
@@ -60,16 +98,69 @@ export default function ChildCustomDetail({ id }: Props) {
   const tLen = trainingList.length
   const ghostCount = Math.max(0, gameCount - tLen)
 
-  const handleExtract = () => {
-    const words = [...DEFAULT_WORDS]
-    setCoreWord(words[0] ?? null)
-    setTrainingList(words.slice(1, 1 + gameCount))
-    setCandidateList(words.slice(1 + gameCount))
-    setCustomWords([])
-    customOriginSet.current.clear()
-    setAddInput('')
-    setSwapSource(null)
-    setExtracted(true)
+  const handleExtract = async () => {
+    if (extracting) return
+    setExtracting(true)
+    try {
+      const r = await api.customExtract(id, {
+        aim_joum: custom.aim_joum, pos: custom.pos,
+        min_len: custom.min_len, max_len: custom.max_len,
+        is_cvcword_del_yn: custom.is_cvcword_del_yn,
+        orderby_ewords_yn: custom.orderby_ewords_yn
+      })
+      const words = r.tr_words
+      setCustom(c => ({ ...c, coreword: r.coreword }))
+      setCoreWord(r.coreword || words[0] || null)
+      const after = words.filter(w => w !== r.coreword)
+      setTrainingList(after.slice(0, gameCount))
+      setCandidateList(after.slice(gameCount))
+      setCustomWords([])
+      customOriginSet.current.clear()
+      setAddInput('')
+      setSwapSource(null)
+      setExtracted(true)
+    } catch (e) {
+      console.error(e); alert('단어 추출 실패')
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const tr_words = [
+        ...(coreWord ? [coreWord] : []),
+        ...trainingList,
+        ...candidateList,
+        ...customWords
+      ]
+      const r = await api.customSave(id, {
+        idx: custom.idx ?? undefined,
+        aim_joum: custom.aim_joum, pos: custom.pos, coreword: coreWord ?? custom.coreword,
+        tr_words,
+        suit_age: custom.suit_age, growth_grade: custom.growth_grade,
+        is_ojoum_del_yn: custom.is_ojoum_del_yn,
+        is_only_noun_yn: custom.is_only_noun_yn,
+        is_cvcword_del_yn: custom.is_cvcword_del_yn,
+        min_len: custom.min_len, max_len: custom.max_len,
+        can_read_yn: custom.can_read_yn,
+        orderby_evowels_yn: custom.orderby_evowels_yn,
+        orderby_ewords_yn: custom.orderby_ewords_yn
+      })
+      setCustom(c => ({ ...c, idx: r.idx }))
+      alert(r.action === 'insert' ? '새 trainingset 으로 저장되었습니다.' : '저장되었습니다.')
+    } catch (e) {
+      console.error(e); alert('저장 실패')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 취약한 발음 후보 클릭 → 목표조음 즉시 변경
+  const applyWeakPhoneme = (phoneme: string, posLabel: string) => {
+    setCustom(c => ({ ...c, aim_joum: phoneme, pos: posLabel }))
   }
 
   // ── training DnD handlers ──────────────────────────────────────────────────
@@ -502,18 +593,54 @@ export default function ChildCustomDetail({ id }: Props) {
           {/* 치료 단어 설정 */}
           <section className="space-y-5">
             <h3 className="text-[18px] font-bold text-ink-900">치료 단어 설정</h3>
+
+            {/* 취약한 발음 후보 (최근 진단 기반) — 클릭하면 목표조음 자동 설정 */}
+            {detail?.weak_phonemes && detail.weak_phonemes.length > 0 && (
+              <div className="bg-surface-card border border-line rounded-[10px] p-5">
+                <p className="text-[14px] font-semibold text-ink-900 mb-3">취약한 발음 후보</p>
+                <div className="flex flex-wrap gap-2">
+                  {detail.weak_phonemes.map((w, i) => {
+                    const active = custom.aim_joum === w.phoneme && custom.pos === w.pos
+                    return (
+                      <button key={i} type="button" onClick={() => applyWeakPhoneme(w.phoneme, w.pos)}
+                        className={[
+                          'inline-flex items-center gap-2 h-9 px-3 rounded-[10px] border text-[13px] transition',
+                          active
+                            ? 'border-[#005744] bg-[#005744] text-white'
+                            : 'border-line bg-white text-ink-900 hover:border-[#005744]'
+                        ].join(' ')}>
+                        <span className="font-bold">{w.phoneme}</span>
+                        <span className="opacity-80">{w.category}</span>
+                        <span className="opacity-60 text-[11px]">{w.pos}</span>
+                        <span className="ml-1 text-[11px] opacity-60">×{w.count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-              <TargetArticulationPanel />
-              {(() => {
-                const childAge = detail?.age_label ? Number(detail.age_label.match(/\d+/)?.[0]) : undefined
-                return <WordFilterPanel key={childAge ?? 'na'} childAge={childAge} options={filterOptions} setOptions={setFilterOptions} />
-              })()}
+              <TargetArticulationPanel
+                value={{
+                  aim_joum: custom.aim_joum, pos: custom.pos, coreword: custom.coreword,
+                  orderby_evowels_yn: custom.orderby_evowels_yn, orderby_ewords_yn: custom.orderby_ewords_yn
+                }}
+                onChange={patch => setCustom(c => ({ ...c, ...patch }))} />
+              <WordFilterPanel
+                value={{
+                  suit_age: custom.suit_age, growth_grade: custom.growth_grade,
+                  is_ojoum_del_yn: custom.is_ojoum_del_yn, is_only_noun_yn: custom.is_only_noun_yn,
+                  is_cvcword_del_yn: custom.is_cvcword_del_yn, min_len: custom.min_len, max_len: custom.max_len,
+                  can_read_yn: custom.can_read_yn
+                }}
+                onChange={patch => setCustom(c => ({ ...c, ...patch }))} />
             </div>
 
             <div className="flex justify-center">
-              <button type="button" onClick={handleExtract}
-                className="w-[220px] h-[58px] rounded-[10px] bg-[#005744] text-white text-[18px] font-semibold hover:opacity-90 transition">
-                단어 추출
+              <button type="button" onClick={handleExtract} disabled={extracting}
+                className="w-[220px] h-[58px] rounded-[10px] bg-[#005744] text-white text-[18px] font-semibold hover:opacity-90 transition disabled:opacity-50">
+                {extracting ? '추출 중…' : '단어 추출'}
               </button>
             </div>
 
@@ -743,17 +870,20 @@ export default function ChildCustomDetail({ id }: Props) {
 
           {/* Bottom actions */}
           <div className="flex justify-center gap-4 pt-6 pb-12">
-            {[
-              { label: '초기화', onClick: () => { setCoreWord(null); setTrainingList([]); setCandidateList([]); setCustomWords([]); setAddInput(''); setExtracted(false); setSwapSource(null) } },
-              { label: '임시저장', onClick: () => alert('임시저장되었습니다.') },
-              { label: '예약하기', onClick: () => alert('예약되었습니다.') },
-              { label: '적용', onClick: () => alert('적용되었습니다.') },
-            ].map(({ label, onClick }) => (
-              <button key={label} type="button" onClick={onClick}
-                className="w-[220px] h-[58px] rounded-[10px] border border-[#005744] text-[#005744] text-[18px] font-semibold hover:bg-[#005744] hover:text-white transition">
-                {label}
-              </button>
-            ))}
+            <button type="button"
+              onClick={() => {
+                setCustom(DEFAULT_CUSTOM); setCoreWord(null)
+                setTrainingList([]); setCandidateList([]); setCustomWords([])
+                setAddInput(''); setExtracted(false); setSwapSource(null)
+                customOriginSet.current.clear()
+              }}
+              className="w-[220px] h-[58px] rounded-[10px] border border-[#005744] text-[#005744] text-[18px] font-semibold hover:bg-[#005744] hover:text-white transition">
+              초기화
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving}
+              className="w-[220px] h-[58px] rounded-[10px] bg-[#005744] text-white text-[18px] font-semibold hover:opacity-90 transition disabled:opacity-50">
+              {saving ? '저장 중…' : '저장'}
+            </button>
           </div>
         </main>
       </div>
@@ -778,51 +908,40 @@ function StatusRow({ label, children }: { label: string; children: React.ReactNo
 /* ---------------------------------- */
 const POSITION_OPTIONS = ['어두초성', '어중초성', '어중종성', '어말종성']
 const CONSONANT_OPTIONS = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']
-const CORE_VOWEL_OPTIONS = ['ㅏ', 'ㅓ', 'ㅗ', 'ㅜ', 'ㅡ', 'ㅣ', 'ㅐ', 'ㅔ']
 
-type SortRule = { key: string; label: string; enabled: boolean; priority: number }
-
-const INITIAL_SORT_RULES: SortRule[] = [
-  { key: 'easyVowel', label: '쉬운 모음 결합', enabled: true, priority: 2 },
-  { key: 'familiar', label: '친숙한 단어', enabled: true, priority: 1 },
-  { key: 'ageMastered', label: '연령대 완전습득자음', enabled: true, priority: 3 }
-]
-
-function TargetArticulationPanel() {
-  const [position, setPosition] = useState(POSITION_OPTIONS[0])
-  const [consonant, setConsonant] = useState(CONSONANT_OPTIONS[0])
-  const [coreVowel, setCoreVowel] = useState(CORE_VOWEL_OPTIONS[0])
-  const [sortRules, setSortRules] = useState<SortRule[]>(INITIAL_SORT_RULES)
-
-  const toggleEnabled = (key: string) =>
-    setSortRules(rules => rules.map(r => r.key === key ? { ...r, enabled: !r.enabled } : r))
-  const setPriority = (key: string, value: number) =>
-    setSortRules(rules => rules.map(r => r.key === key ? { ...r, priority: Math.max(1, value) } : r))
-
+function TargetArticulationPanel({ value, onChange }: {
+  value: { aim_joum: string; pos: string; coreword: string; orderby_evowels_yn: 'Y' | 'N'; orderby_ewords_yn: 'Y' | 'N' }
+  onChange: (patch: Partial<{ aim_joum: string; pos: string; coreword: string; orderby_evowels_yn: 'Y' | 'N'; orderby_ewords_yn: 'Y' | 'N' }>) => void
+}) {
+  // CONSONANT_OPTIONS 에 현재 값이 없으면 (예: 받침 자모) 임시로 끼워 표시
+  const consonantOpts = CONSONANT_OPTIONS.includes(value.aim_joum) ? CONSONANT_OPTIONS : [value.aim_joum, ...CONSONANT_OPTIONS]
+  const positionOpts  = POSITION_OPTIONS.includes(value.pos) ? POSITION_OPTIONS : [value.pos, ...POSITION_OPTIONS]
   return (
     <div className="bg-surface-card border border-line rounded-[10px] p-6 min-h-[475px]">
       <h3 className="text-[18px] font-extrabold text-ink-900 mb-6">목표조음정의</h3>
       <div className="space-y-4 mb-8">
-        <FieldRow label="목표 위치"><Select value={position} onChange={setPosition} options={POSITION_OPTIONS} /></FieldRow>
-        <FieldRow label="목표 조음"><Select value={consonant} onChange={setConsonant} options={CONSONANT_OPTIONS} /></FieldRow>
-        <FieldRow label="핵심 1음절"><Select value={coreVowel} onChange={setCoreVowel} options={CORE_VOWEL_OPTIONS} /></FieldRow>
+        <FieldRow label="목표 위치"><Select value={value.pos} onChange={v => onChange({ pos: v })} options={positionOpts} /></FieldRow>
+        <FieldRow label="목표 조음"><Select value={value.aim_joum} onChange={v => onChange({ aim_joum: v })} options={consonantOpts} /></FieldRow>
+        <FieldRow label="핵심 단어">
+          <input
+            value={value.coreword}
+            onChange={e => onChange({ coreword: e.target.value })}
+            placeholder="대표 단어 (예: 다리)"
+            className="w-full h-9 px-3 border border-line rounded-[5px] text-[14px] focus:outline-none focus:border-brand"
+          />
+        </FieldRow>
       </div>
       <div className="border-t border-line pt-5">
-        <div className="grid grid-cols-[1fr_90px_90px] gap-3 pb-2 border-b border-line text-[13px] font-medium text-ink-700">
-          <span>정렬순서</span><span className="text-center">적용여부</span><span className="text-center">우선순위</span>
-        </div>
-        <ul className="divide-y divide-line">
-          {sortRules.map(rule => (
-            <li key={rule.key} className="grid grid-cols-[1fr_90px_90px] gap-3 py-3 items-center">
-              <span className="text-[14px] text-ink-900">{rule.label}</span>
-              <div className="flex justify-center"><CheckboxBox checked={rule.enabled} onChange={() => toggleEnabled(rule.key)} /></div>
-              <div className="flex justify-center">
-                <input type="number" min={1} value={rule.priority}
-                  onChange={e => setPriority(rule.key, Number(e.target.value) || 1)}
-                  className="w-14 h-8 text-center border border-line rounded-[5px] text-[14px] focus:outline-none focus:border-brand" />
-              </div>
-            </li>
-          ))}
+        <p className="text-[13px] font-medium text-ink-700 mb-3">단어 정렬</p>
+        <ul className="space-y-3 text-[14px]">
+          <li className="flex items-center justify-between">
+            <span>쉬운 모음 우선 정렬</span>
+            <CheckboxBox checked={value.orderby_evowels_yn === 'Y'} onChange={() => onChange({ orderby_evowels_yn: value.orderby_evowels_yn === 'Y' ? 'N' : 'Y' })} />
+          </li>
+          <li className="flex items-center justify-between">
+            <span>친숙한 단어(빈도) 우선 정렬</span>
+            <CheckboxBox checked={value.orderby_ewords_yn === 'Y'} onChange={() => onChange({ orderby_ewords_yn: value.orderby_ewords_yn === 'Y' ? 'N' : 'Y' })} />
+          </li>
         </ul>
       </div>
     </div>
@@ -854,70 +973,70 @@ function CheckboxBox({ checked, onChange }: { checked: boolean; onChange: () => 
 /* ---------------------------------- */
 /* 단어 필터 panel                     */
 /* ---------------------------------- */
-const AGE_ACQUIRED_OPTIONS = ['완전습득', '숙달', '관습적', '출현']
+const GROWTH_GRADE_OPTIONS = [
+  { value: 1, label: '완전습득' },
+  { value: 2, label: '숙달' },
+  { value: 3, label: '관습적' },
+  { value: 4, label: '출현' }
+]
 const WORD_LENGTH_OPTIONS = ['1', '2', '3', '4', '5']
-const AGE_MIN_BOUND = 3
+const AGE_MIN_BOUND = 1
 const AGE_MAX_BOUND = 10
 
-type FilterState = {
-  ageMin: number; ageMax: number; removeMispronounced: boolean
-  ageAcquired: string; removeNonNoun: boolean; removeClosed: boolean
-  lengthMin: string; lengthMax: string; canRead: '가능' | '불가'
+type FilterValue = {
+  suit_age: number; growth_grade: number
+  is_ojoum_del_yn: 'Y' | 'N'; is_only_noun_yn: 'Y' | 'N'; is_cvcword_del_yn: 'Y' | 'N'
+  min_len: number; max_len: number; can_read_yn: 'Y' | 'N'
 }
 
-function WordFilterPanel({ options, setOptions, childAge }: {
-  options: Record<string, boolean>
-  setOptions: (fn: (prev: Record<string, boolean>) => Record<string, boolean>) => void
-  childAge?: number
+function WordFilterPanel({ value, onChange }: {
+  value: FilterValue
+  onChange: (patch: Partial<FilterValue>) => void
 }) {
-  // 단어 적정 나이 기본값: 최소 = max(3, 만나이-2), 최대 = min(10, 만나이+1)
-  const hasAge = childAge != null && !isNaN(childAge)
-  const defaultAgeMin = hasAge ? Math.max(AGE_MIN_BOUND, childAge! - 2) : AGE_MIN_BOUND
-  const defaultAgeMax = hasAge ? Math.min(AGE_MAX_BOUND, childAge! + 1) : AGE_MAX_BOUND
-  const [filter, setFilter] = useState<FilterState>({
-    ageMin: defaultAgeMin, ageMax: defaultAgeMax,
-    removeMispronounced: options.removeMispronounced, ageAcquired: AGE_ACQUIRED_OPTIONS[0],
-    removeNonNoun: options.removeNonNoun, removeClosed: options.removeClosed,
-    lengthMin: '1', lengthMax: '5', canRead: '가능'
-  })
-  const setField = <K extends keyof FilterState>(k: K, v: FilterState[K]) => setFilter(p => ({ ...p, [k]: v }))
-  const toggleBool = (k: 'removeMispronounced' | 'removeNonNoun' | 'removeClosed') => {
-    setFilter(p => ({ ...p, [k]: !p[k] }))
-    setOptions(p => ({ ...p, [k]: !p[k] }))
-  }
-  const clampAgeMin = (n: number) => Math.max(AGE_MIN_BOUND, Math.min(filter.ageMax, n))
-  const clampAgeMax = (n: number) => Math.max(filter.ageMin, Math.min(AGE_MAX_BOUND, n))
-
   return (
     <div className="bg-surface-card border border-line rounded-[10px] p-6 min-h-[475px]">
       <h3 className="text-[18px] font-extrabold text-ink-900 mb-5">단어 필터</h3>
       <ul className="divide-y divide-line">
         <FilterRow label="단어 적정 나이">
           <div className="flex items-center gap-2">
-            <NumberStepper value={filter.ageMin} onChange={n => setField('ageMin', clampAgeMin(n))} min={AGE_MIN_BOUND} max={AGE_MAX_BOUND} />
-            <span className="text-ink-500">~</span>
-            <NumberStepper value={filter.ageMax} onChange={n => setField('ageMax', clampAgeMax(n))} min={AGE_MIN_BOUND} max={AGE_MAX_BOUND} />
+            <NumberStepper value={value.suit_age}
+              onChange={n => onChange({ suit_age: Math.max(AGE_MIN_BOUND, Math.min(AGE_MAX_BOUND, n)) })}
+              min={AGE_MIN_BOUND} max={AGE_MAX_BOUND} />
             <span className="text-[13px] text-ink-500 ml-1">세</span>
           </div>
         </FilterRow>
-        <FilterRow label="목표 이외 오조음제거"><CheckboxBox checked={filter.removeMispronounced} onChange={() => toggleBool('removeMispronounced')} /></FilterRow>
         <FilterRow label="연령대 습득 자음">
-          <div className="w-[140px]"><Select value={filter.ageAcquired} onChange={v => setField('ageAcquired', v)} options={AGE_ACQUIRED_OPTIONS} /></div>
+          <div className="w-[140px]">
+            <select value={value.growth_grade}
+              onChange={e => onChange({ growth_grade: Number(e.target.value) })}
+              className="w-full h-9 pl-3 pr-9 appearance-none border border-line rounded-[5px] bg-white text-[14px] focus:outline-none focus:border-brand">
+              {GROWTH_GRADE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
         </FilterRow>
-        <FilterRow label="명사 이외 제거"><CheckboxBox checked={filter.removeNonNoun} onChange={() => toggleBool('removeNonNoun')} /></FilterRow>
-        <FilterRow label="폐쇄형 단어 제거"><CheckboxBox checked={filter.removeClosed} onChange={() => toggleBool('removeClosed')} /></FilterRow>
+        <FilterRow label="목표 이외 오조음 제거"><CheckboxBox checked={value.is_ojoum_del_yn === 'Y'} onChange={() => onChange({ is_ojoum_del_yn: value.is_ojoum_del_yn === 'Y' ? 'N' : 'Y' })} /></FilterRow>
+        <FilterRow label="명사만 사용"><CheckboxBox checked={value.is_only_noun_yn === 'Y'} onChange={() => onChange({ is_only_noun_yn: value.is_only_noun_yn === 'Y' ? 'N' : 'Y' })} /></FilterRow>
+        <FilterRow label="받침 있는 단어 제거"><CheckboxBox checked={value.is_cvcword_del_yn === 'Y'} onChange={() => onChange({ is_cvcword_del_yn: value.is_cvcword_del_yn === 'Y' ? 'N' : 'Y' })} /></FilterRow>
         <FilterRow label="단어 길이">
           <div className="flex items-center gap-2">
             <div className="w-[64px]">
-              <Select value={filter.lengthMin} onChange={v => { const min = Number(v); const max = Math.max(min, Number(filter.lengthMax)); setFilter(p => ({ ...p, lengthMin: v, lengthMax: String(max) })) }} options={WORD_LENGTH_OPTIONS} />
+              <Select value={String(value.min_len)}
+                onChange={v => { const min = Number(v); const max = Math.max(min, value.max_len); onChange({ min_len: min, max_len: max }) }}
+                options={WORD_LENGTH_OPTIONS} />
             </div>
             <span className="text-ink-500">~</span>
             <div className="w-[64px]">
-              <Select value={filter.lengthMax} onChange={v => { const max = Number(v); const min = Math.min(max, Number(filter.lengthMin)); setFilter(p => ({ ...p, lengthMax: v, lengthMin: String(min) })) }} options={WORD_LENGTH_OPTIONS} />
+              <Select value={String(value.max_len)}
+                onChange={v => { const max = Number(v); const min = Math.min(max, value.min_len); onChange({ max_len: max, min_len: min }) }}
+                options={WORD_LENGTH_OPTIONS} />
             </div>
           </div>
         </FilterRow>
-        <FilterRow label="한글 읽기 가능"><Segmented value={filter.canRead} onChange={v => setField('canRead', v)} options={['가능', '불가'] as const} /></FilterRow>
+        <FilterRow label="한글 읽기 가능">
+          <Segmented value={value.can_read_yn === 'Y' ? '가능' : '불가'}
+            onChange={v => onChange({ can_read_yn: v === '가능' ? 'Y' : 'N' })}
+            options={['가능', '불가'] as const} />
+        </FilterRow>
       </ul>
     </div>
   )

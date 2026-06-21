@@ -267,6 +267,22 @@ type MispronEntry = {
 const errJoum = (e: MispronErr) => e.aim_joum || e.a_jm || undefined
 const errCtgr = (e: MispronErr) => e.e_ctgr || e.ctgr || undefined
 
+// 한글 음절에 종성(받침) 이 있는지 — 한 글자라도 받침이 있으면 true.
+// 한글 음절 코드: 0xAC00..0xD7A3. (code - 0xAC00) % 28 != 0 이면 종성 존재.
+function hasJongseong(word: string): boolean {
+  for (const ch of word) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code >= 0xAC00 && code <= 0xD7A3 && (code - 0xAC00) % 28 !== 0) return true
+  }
+  return false
+}
+// 풀(파이프 구분 문자열) 내에서 단어 등장 빈도
+function freqInPool(pool: string, word: string): number {
+  let n = 0; let i = 0
+  while ((i = pool.indexOf(word, i)) !== -1) { n++; i += word.length }
+  return n
+}
+
 type DiagDetail = {
   duration_label: string | null
   statistics: [string, string, string, string][]
@@ -3193,21 +3209,78 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       )
       const rawDiag = (diagLogRows[0] as { analysislog: string | null } | undefined)?.analysislog
       const diagReport: { pos: string; phoneme: string; type: string }[] = []
+      // weak_phonemes: (pos, joum) 묶음으로 오류 빈도 집계 — UI 의 "취약한 발음" 후보
+      const weakMap = new Map<string, { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음' }>()
       if (rawDiag) {
         try {
           const log = JSON.parse(rawDiag) as { mispronunciations?: MispronEntry[] }
           const seen = new Set<string>()
           for (const m of log.mispronunciations ?? []) {
             for (const e of m.e_list ?? []) {
-              if (!e.aim_joum || !e.e_ctgr) continue
-              const key = `${e.pos}|${e.aim_joum}|${e.e_ctgr}`
-              if (seen.has(key)) continue
-              seen.add(key)
-              diagReport.push({ pos: POS_LABEL[e.pos] ?? e.pos, phoneme: e.aim_joum, type: e.e_ctgr })
+              const phoneme = errJoum(e)
+              const ctgr    = errCtgr(e)
+              if (!phoneme || !ctgr) continue
+              const posLabel = POS_LABEL[e.pos] ?? e.pos
+              const key = `${e.pos}|${phoneme}|${ctgr}`
+              if (!seen.has(key)) {
+                seen.add(key)
+                diagReport.push({ pos: posLabel, phoneme, type: ctgr })
+              }
+              // 취약한 발음 집계 — (pos, phoneme) 묶음, 어말종성=받침 / 어중종성=받침 / 초성=자음 / 중성=모음
+              const category: '자음' | '받침' | '모음' =
+                /종성$/.test(e.pos) ? '받침' :
+                /중성$/.test(e.pos) ? '모음' : '자음'
+              const wkey = `${posLabel}|${phoneme}`
+              const wexist = weakMap.get(wkey)
+              if (wexist) wexist.count++
+              else weakMap.set(wkey, { pos: posLabel, phoneme, count: 1, category })
             }
           }
         } catch { /* analysislog parse 실패 무시 */ }
       }
+      const weak_phonemes = [...weakMap.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 12)
+
+      // 현재 저장된 trainingset 로드 (없으면 null)
+      const [tsRows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx, aim_joum, pos, coreword, tr_words, suit_age, growth_grade,
+                is_ojoum_del_yn, is_only_noun_yn, is_cvcword_del_yn,
+                min_len, max_len, can_read_yn, orderby_evowels_yn, orderby_ewords_yn,
+                rsrvd_date
+         FROM tb_trainingset
+         WHERE child_id = ?
+         ORDER BY idx DESC
+         LIMIT 1`,
+        [child.child_member_id]
+      )
+      type TsRow = RowDataPacket & {
+        idx: number; aim_joum: string; pos: string; coreword: string | null; tr_words: string | null
+        suit_age: number; growth_grade: number
+        is_ojoum_del_yn: string; is_only_noun_yn: string; is_cvcword_del_yn: string
+        min_len: number; max_len: number; can_read_yn: string
+        orderby_evowels_yn: string; orderby_ewords_yn: string
+        rsrvd_date: unknown
+      }
+      const ts = tsRows[0] as TsRow | undefined
+      const trainingset = ts ? {
+        idx: ts.idx,
+        aim_joum: ts.aim_joum,
+        pos: ts.pos,
+        coreword: ts.coreword ?? '',
+        tr_words: (ts.tr_words ?? '').split('|').filter(Boolean),
+        suit_age: ts.suit_age,
+        growth_grade: ts.growth_grade,
+        is_ojoum_del_yn: ts.is_ojoum_del_yn,
+        is_only_noun_yn: ts.is_only_noun_yn,
+        is_cvcword_del_yn: ts.is_cvcword_del_yn,
+        min_len: ts.min_len,
+        max_len: ts.max_len,
+        can_read_yn: ts.can_read_yn,
+        orderby_evowels_yn: ts.orderby_evowels_yn,
+        orderby_ewords_yn: ts.orderby_ewords_yn,
+        rsrvd_date: fmtDate(ts.rsrvd_date)
+      } : null
 
       const [schedRows] = await conn.query<RowDataPacket[]>(
         `SELECT DAYOFWEEK(start_date) AS dow
@@ -3236,8 +3309,103 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           at:    fmtDate(train?.act_date)
         } : null,
         reserved:    null,
-        diagnosis_rows: diagReport
+        diagnosis_rows: diagReport,
+        weak_phonemes,
+        trainingset
       })
+    }
+
+    // PUT /api/children/:id/custom — trainingset 저장 (idx 있으면 UPDATE, 없으면 INSERT)
+    const customSaveMatch = path.match(/^\/api\/children\/(\d+)\/custom$/)
+    if (customSaveMatch && method === 'PUT') {
+      const cid = Number(customSaveMatch[1])
+      const [chk] = await conn.query<RowDataPacket[]>(
+        `SELECT id AS child_member_id FROM tb_member WHERE idx=? AND mtype='child' AND instt_code=? AND delete_yn='N' LIMIT 1`,
+        [cid, user.instt_code]
+      )
+      const childIdStr = (chk[0] as { child_member_id?: string } | undefined)?.child_member_id
+      if (!childIdStr) return err(404, 'not found')
+      const body = (await request.json().catch(() => ({}))) as {
+        idx?: number | null
+        aim_joum?: string; pos?: string; coreword?: string; tr_words?: string[]
+        suit_age?: number; growth_grade?: number
+        is_ojoum_del_yn?: string; is_only_noun_yn?: string; is_cvcword_del_yn?: string
+        min_len?: number; max_len?: number; can_read_yn?: string
+        orderby_evowels_yn?: string; orderby_ewords_yn?: string
+        rsrvd_date?: string | null
+      }
+      const aim_joum = trimStr(body.aim_joum)
+      const pos      = trimStr(body.pos)
+      if (!aim_joum || !pos) return err(400, 'aim_joum/pos required')
+      const tr_words_str = Array.isArray(body.tr_words) ? body.tr_words.filter(w => typeof w === 'string' && w.trim()).join('|') : ''
+      const yn = (v: string | undefined, def: 'Y' | 'N') => (v === 'Y' || v === 'N') ? v : def
+      const params = [
+        childIdStr, aim_joum, pos, trimStr(body.coreword), tr_words_str,
+        body.rsrvd_date && /^\d{4}-\d{2}-\d{2}/.test(body.rsrvd_date) ? body.rsrvd_date : null,
+        Number.isFinite(body.suit_age) ? body.suit_age : 0,
+        Number.isFinite(body.growth_grade) ? body.growth_grade : 1,
+        yn(body.is_ojoum_del_yn, 'N'), yn(body.is_only_noun_yn, 'Y'), yn(body.is_cvcword_del_yn, 'Y'),
+        Number.isFinite(body.min_len) ? body.min_len : 2,
+        Number.isFinite(body.max_len) ? body.max_len : 3,
+        yn(body.can_read_yn, 'N'), yn(body.orderby_evowels_yn, 'N'), yn(body.orderby_ewords_yn, 'Y')
+      ]
+      if (body.idx && body.idx > 0) {
+        const [existed] = await conn.query<RowDataPacket[]>(
+          `SELECT idx FROM tb_trainingset WHERE idx=? AND child_id=?`, [body.idx, childIdStr]
+        )
+        if (existed[0]) {
+          await conn.query(
+            `UPDATE tb_trainingset SET child_id=?, aim_joum=?, pos=?, coreword=?, tr_words=?, rsrvd_date=?,
+                    suit_age=?, growth_grade=?, is_ojoum_del_yn=?, is_only_noun_yn=?, is_cvcword_del_yn=?,
+                    min_len=?, max_len=?, can_read_yn=?, orderby_evowels_yn=?, orderby_ewords_yn=?
+             WHERE idx=?`,
+            [...params, body.idx]
+          )
+          return json({ idx: body.idx, action: 'update' })
+        }
+      }
+      const [ins] = await conn.query<ResultSetHeader>(
+        `INSERT INTO tb_trainingset (child_id, aim_joum, pos, coreword, tr_words, rsrvd_date,
+                                     suit_age, growth_grade, is_ojoum_del_yn, is_only_noun_yn, is_cvcword_del_yn,
+                                     min_len, max_len, can_read_yn, orderby_evowels_yn, orderby_ewords_yn)
+         VALUES (?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?)`,
+        params
+      )
+      return json({ idx: ins.insertId, action: 'insert' })
+    }
+
+    // POST /api/children/:id/custom/extract — (aim_joum, pos) 풀에서 필터 적용해 후보 추출
+    const customExtractMatch = path.match(/^\/api\/children\/(\d+)\/custom\/extract$/)
+    if (customExtractMatch && method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as {
+        aim_joum?: string; pos?: string
+        min_len?: number; max_len?: number
+        is_cvcword_del_yn?: string
+        orderby_ewords_yn?: string
+      }
+      const aim_joum = trimStr(body.aim_joum); const pos = trimStr(body.pos)
+      if (!aim_joum || !pos) return err(400, 'aim_joum/pos required')
+      // 같은 (aim_joum, pos) 의 모든 저장 trainingset 의 tr_words 를 합쳐 풀로 사용
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT GROUP_CONCAT(tr_words SEPARATOR '|') AS pool, COUNT(*) AS n
+         FROM tb_trainingset WHERE aim_joum=? AND pos=?`,
+        [aim_joum, pos]
+      )
+      const pool = (rows[0] as { pool?: string | null; n?: number } | undefined)?.pool ?? ''
+      const all = [...new Set(pool.split('|').map(w => w.trim()).filter(Boolean))]
+      const minL = Number.isFinite(body.min_len) && (body.min_len as number) > 0 ? (body.min_len as number) : 1
+      const maxL = Number.isFinite(body.max_len) && (body.max_len as number) > 0 ? (body.max_len as number) : 99
+      const cvcDel = body.is_cvcword_del_yn === 'Y'
+      const filtered = all.filter(w => {
+        const len = [...w].length
+        if (len < minL || len > maxL) return false
+        if (cvcDel && hasJongseong(w)) return false
+        return true
+      })
+      // 정렬: ewords (사용 빈도 — 다른 trainingset 에서 자주 나온 단어 우선)
+      const sorted = body.orderby_ewords_yn === 'Y' ? filtered.sort((a, b) => freqInPool(pool, a) - freqInPool(pool, b) > 0 ? -1 : 1) : filtered
+      const coreword = sorted[0] ?? ''
+      return json({ coreword, tr_words: sorted.slice(0, 50) })
     }
 
     // GET /api/children/:id

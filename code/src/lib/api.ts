@@ -175,6 +175,25 @@ export type CustomListItem = {
   last_diagnosis: string | null
 }
 
+export type WeakPhoneme = { pos: string; phoneme: string; count: number; category: '자음' | '받침' | '모음' }
+export type TrainingSetDto = {
+  idx: number
+  aim_joum: string
+  pos: string
+  coreword: string
+  tr_words: string[]
+  suit_age: number
+  growth_grade: number
+  is_ojoum_del_yn: 'Y' | 'N'
+  is_only_noun_yn: 'Y' | 'N'
+  is_cvcword_del_yn: 'Y' | 'N'
+  min_len: number
+  max_len: number
+  can_read_yn: 'Y' | 'N'
+  orderby_evowels_yn: 'Y' | 'N'
+  orderby_ewords_yn: 'Y' | 'N'
+  rsrvd_date: string | null
+}
 export type CustomDetailDto = {
   id: number
   identifier: string
@@ -187,6 +206,8 @@ export type CustomDetailDto = {
   current: { sound: string; by: string | null; at: string | null } | null
   reserved: null
   diagnosis_rows: { pos: string; phoneme: string; type: string }[]
+  weak_phonemes: WeakPhoneme[]
+  trainingset: TrainingSetDto | null
 }
 
 export type DiagnosisDetailDto = {
@@ -473,6 +494,21 @@ export const api = {
     }),
   customList: () => apiFetch<CustomListItem[]>('/children/custom-list'),
   customDetail: (id: number) => apiFetch<CustomDetailDto>(`/children/${id}/custom`),
+  customSave: (id: number, body: Partial<TrainingSetDto> & { tr_words: string[] }) =>
+    apiFetch<{ idx: number; action: 'insert' | 'update' }>(`/children/${id}/custom`, {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    }),
+  customExtract: (id: number, body: {
+    aim_joum: string; pos: string
+    min_len?: number; max_len?: number
+    is_cvcword_del_yn?: 'Y' | 'N'
+    orderby_ewords_yn?: 'Y' | 'N'
+  }) =>
+    apiFetch<{ coreword: string; tr_words: string[] }>(`/children/${id}/custom/extract`, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }),
   diagnosis: (id: number) => apiFetch<DiagnosisDetailDto>(`/diagnoses/${id}`),
   diagnosisRecordings: (id: number) => apiFetch<RecordingItem[]>(`/diagnoses/${id}/recordings`),
   staff: (types: ('doctor' | 'therapist')[]) =>
