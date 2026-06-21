@@ -501,8 +501,11 @@ export const api = {
     }),
   customExtract: (id: number, body: {
     aim_joum: string; pos: string
-    min_len?: number; max_len?: number
+    suit_age?: number; growth_grade?: number
+    is_ojoum_del_yn?: 'Y' | 'N'
+    is_only_noun_yn?: 'Y' | 'N'
     is_cvcword_del_yn?: 'Y' | 'N'
+    min_len?: number; max_len?: number
     orderby_ewords_yn?: 'Y' | 'N'
   }) =>
     apiFetch<{ coreword: string; tr_words: string[] }>(`/children/${id}/custom/extract`, {

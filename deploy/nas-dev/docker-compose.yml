@@ -50,6 +50,10 @@ services:
       PORT: 4011
     ports:
       - "4012:4011"
+    volumes:
+      # 단어 사전 외부 편집 (운영과 동일 패턴, dev 전용 파일).
+      # 변경 후 api 재시작(docker compose up -d --force-recreate api) 필요.
+      - /volume1/docker/hidongdong_web_dev/data/words_dic.txt:/app/dist-server/data/words_dic.txt:ro
     depends_on:
       db:
         condition: service_healthy

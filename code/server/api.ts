@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { extractWords, type WordPos } from './dictionary.js'
+import { developmentRank, type GrowthGrade } from './joum_growth.js'
 
 // ─── 환경 타입 ───────────────────────────────────────────────────────────────
 
@@ -267,22 +268,6 @@ type MispronEntry = {
 }
 const errJoum = (e: MispronErr) => e.aim_joum || e.a_jm || undefined
 const errCtgr = (e: MispronErr) => e.e_ctgr || e.ctgr || undefined
-
-// 한글 음절에 종성(받침) 이 있는지 — 한 글자라도 받침이 있으면 true.
-// 한글 음절 코드: 0xAC00..0xD7A3. (code - 0xAC00) % 28 != 0 이면 종성 존재.
-function hasJongseong(word: string): boolean {
-  for (const ch of word) {
-    const code = ch.codePointAt(0) ?? 0
-    if (code >= 0xAC00 && code <= 0xD7A3 && (code - 0xAC00) % 28 !== 0) return true
-  }
-  return false
-}
-// 풀(파이프 구분 문자열) 내에서 단어 등장 빈도
-function freqInPool(pool: string, word: string): number {
-  let n = 0; let i = 0
-  while ((i = pool.indexOf(word, i)) !== -1) { n++; i += word.length }
-  return n
-}
 
 type DiagDetail = {
   duration_label: string | null
@@ -3239,8 +3224,19 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           }
         } catch { /* analysislog parse 실패 무시 */ }
       }
+      // 취약 발음 후보 정렬 — 문서(치료단어 알고리즘 정리_김덕규.txt 라인 36-37):
+      //   "치료대상 자음음소 중 가장 습득하기 쉬운 자음음소"
+      //   "치료대상 자음음소의 위치가 어두초성에 있는 경우" 우선
+      // → 1순위: 발달 순위 오름차순 (쉬운 자음 먼저), 2순위: 어두초성 우선, 3순위: 빈도 내림차순
+      const POS_PRIORITY: Record<string, number> = { '어두초성': 0, '어중초성': 1, '어중종성': 2, '어말종성': 3 }
       const weak_phonemes = [...weakMap.values()]
-        .sort((a, b) => b.count - a.count)
+        .sort((a, b) => {
+          const da = developmentRank(a.phoneme); const db = developmentRank(b.phoneme)
+          if (da !== db) return da - db
+          const pa = POS_PRIORITY[a.pos] ?? 9; const pb = POS_PRIORITY[b.pos] ?? 9
+          if (pa !== pb) return pa - pb
+          return b.count - a.count
+        })
         .slice(0, 12)
 
       // 현재 저장된 trainingset 로드 (없으면 null)
@@ -3377,14 +3373,21 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
     // POST /api/children/:id/custom/extract — 단어 사전(words_dic.txt) 에서
     // (aim_joum, pos) + 필터로 후보 추출. 사전은 dictionary.ts 가 캐시.
+    // 알고리즘: DataMgr_Joum.cs GenerateTrainWordList 파이프라인 그대로 (FilterAdoptAge,
+    // FilterOjoumButTarget, FilterExceptNoun, FilterCVCWord, FilterWordLen, OrderByWordLen,
+    // OrderByFriendlyWord). is_ojoum_del_yn 처리 시 child 의 최근 진단 mispronunciations 에서
+    // 오조음 자모를 직접 추출한다.
     const customExtractMatch = path.match(/^\/api\/children\/(\d+)\/custom\/extract$/)
     if (customExtractMatch && method === 'POST') {
+      const cid = Number(customExtractMatch[1])
       const body = (await request.json().catch(() => ({}))) as {
         aim_joum?: string; pos?: string
         min_len?: number; max_len?: number
         is_cvcword_del_yn?: string
         is_only_noun_yn?: string
+        is_ojoum_del_yn?: string
         suit_age?: number
+        growth_grade?: number
         orderby_ewords_yn?: string
       }
       const aim_joum = trimStr(body.aim_joum)
@@ -3393,14 +3396,51 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const VALID_POS = ['어두초성','어중초성','어중종성','어말종성']
       if (!VALID_POS.includes(pos)) return err(400, 'invalid pos')
 
+      // is_ojoum_del_yn=Y 인 경우, 해당 아동의 최근 diagnostic 에서 오조음 자모 수집
+      let child_ojoum_joums: string[] | undefined
+      if (body.is_ojoum_del_yn === 'Y') {
+        const [chk] = await conn.query<RowDataPacket[]>(
+          `SELECT id AS child_member_id FROM tb_member WHERE idx=? AND mtype='child' AND instt_code=? AND delete_yn='N' LIMIT 1`,
+          [cid, user.instt_code]
+        )
+        const childIdStr = (chk[0] as { child_member_id?: string } | undefined)?.child_member_id
+        if (childIdStr) {
+          const [dr] = await conn.query<RowDataPacket[]>(
+            `SELECT analysislog FROM tb_childact_report
+             WHERE id=? AND use_type='diagnostic' ORDER BY act_date DESC, idx DESC LIMIT 1`,
+            [childIdStr]
+          )
+          const raw = (dr[0] as { analysislog: string | null } | undefined)?.analysislog
+          if (raw) {
+            try {
+              const log = JSON.parse(raw) as { mispronunciations?: MispronEntry[] }
+              const set = new Set<string>()
+              for (const m of log.mispronunciations ?? []) {
+                for (const e of m.e_list ?? []) {
+                  const j = errJoum(e)
+                  if (j) set.add(j)
+                }
+              }
+              child_ojoum_joums = [...set]
+            } catch { /* parse 실패 시 ojoum 필터 무시 */ }
+          }
+        }
+      }
+
+      const grade = Number(body.growth_grade)
+      const validGrade: GrowthGrade | undefined = (grade === 0 || grade === 1 || grade === 2 || grade === 3) ? grade as GrowthGrade : undefined
+
       const words = extractWords({
         aim_joum,
         pos,
+        suit_age: Number.isFinite(body.suit_age) ? body.suit_age : undefined,
+        growth_grade: validGrade,
+        is_ojoum_del_yn: body.is_ojoum_del_yn === 'Y' ? 'Y' : 'N',
+        child_ojoum_joums,
+        is_only_noun_yn:  body.is_only_noun_yn  === 'Y' ? 'Y' : 'N',
+        is_cvcword_del_yn: body.is_cvcword_del_yn === 'Y' ? 'Y' : 'N',
         min_len: Number.isFinite(body.min_len) ? body.min_len : undefined,
         max_len: Number.isFinite(body.max_len) ? body.max_len : undefined,
-        is_cvcword_del_yn: body.is_cvcword_del_yn === 'Y' ? 'Y' : 'N',
-        is_only_noun_yn:  body.is_only_noun_yn  === 'Y' ? 'Y' : 'N',
-        suit_age: Number.isFinite(body.suit_age) ? body.suit_age : undefined,
         orderby_ewords_yn: body.orderby_ewords_yn === 'Y' ? 'Y' : 'N'
       }, 50)
       const tr_words = words.map(w => w.word)

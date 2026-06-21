@@ -104,8 +104,11 @@ export default function ChildCustomDetail({ id }: Props) {
     try {
       const r = await api.customExtract(id, {
         aim_joum: custom.aim_joum, pos: custom.pos,
-        min_len: custom.min_len, max_len: custom.max_len,
+        suit_age: custom.suit_age, growth_grade: custom.growth_grade,
+        is_ojoum_del_yn: custom.is_ojoum_del_yn,
+        is_only_noun_yn: custom.is_only_noun_yn,
         is_cvcword_del_yn: custom.is_cvcword_del_yn,
+        min_len: custom.min_len, max_len: custom.max_len,
         orderby_ewords_yn: custom.orderby_ewords_yn
       })
       const words = r.tr_words
