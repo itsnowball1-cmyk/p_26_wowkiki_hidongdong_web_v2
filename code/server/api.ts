@@ -2,6 +2,7 @@ import { createConnection, type Connection, type RowDataPacket, type ResultSetHe
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { extractWords, type WordPos } from './dictionary.js'
 
 // ─── 환경 타입 ───────────────────────────────────────────────────────────────
 
@@ -3374,38 +3375,37 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json({ idx: ins.insertId, action: 'insert' })
     }
 
-    // POST /api/children/:id/custom/extract — (aim_joum, pos) 풀에서 필터 적용해 후보 추출
+    // POST /api/children/:id/custom/extract — 단어 사전(words_dic.txt) 에서
+    // (aim_joum, pos) + 필터로 후보 추출. 사전은 dictionary.ts 가 캐시.
     const customExtractMatch = path.match(/^\/api\/children\/(\d+)\/custom\/extract$/)
     if (customExtractMatch && method === 'POST') {
       const body = (await request.json().catch(() => ({}))) as {
         aim_joum?: string; pos?: string
         min_len?: number; max_len?: number
         is_cvcword_del_yn?: string
+        is_only_noun_yn?: string
+        suit_age?: number
         orderby_ewords_yn?: string
       }
-      const aim_joum = trimStr(body.aim_joum); const pos = trimStr(body.pos)
+      const aim_joum = trimStr(body.aim_joum)
+      const pos = trimStr(body.pos) as WordPos
       if (!aim_joum || !pos) return err(400, 'aim_joum/pos required')
-      // 같은 (aim_joum, pos) 의 모든 저장 trainingset 의 tr_words 를 합쳐 풀로 사용
-      const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT GROUP_CONCAT(tr_words SEPARATOR '|') AS pool, COUNT(*) AS n
-         FROM tb_trainingset WHERE aim_joum=? AND pos=?`,
-        [aim_joum, pos]
-      )
-      const pool = (rows[0] as { pool?: string | null; n?: number } | undefined)?.pool ?? ''
-      const all = [...new Set(pool.split('|').map(w => w.trim()).filter(Boolean))]
-      const minL = Number.isFinite(body.min_len) && (body.min_len as number) > 0 ? (body.min_len as number) : 1
-      const maxL = Number.isFinite(body.max_len) && (body.max_len as number) > 0 ? (body.max_len as number) : 99
-      const cvcDel = body.is_cvcword_del_yn === 'Y'
-      const filtered = all.filter(w => {
-        const len = [...w].length
-        if (len < minL || len > maxL) return false
-        if (cvcDel && hasJongseong(w)) return false
-        return true
-      })
-      // 정렬: ewords (사용 빈도 — 다른 trainingset 에서 자주 나온 단어 우선)
-      const sorted = body.orderby_ewords_yn === 'Y' ? filtered.sort((a, b) => freqInPool(pool, a) - freqInPool(pool, b) > 0 ? -1 : 1) : filtered
-      const coreword = sorted[0] ?? ''
-      return json({ coreword, tr_words: sorted.slice(0, 50) })
+      const VALID_POS = ['어두초성','어중초성','어중종성','어말종성']
+      if (!VALID_POS.includes(pos)) return err(400, 'invalid pos')
+
+      const words = extractWords({
+        aim_joum,
+        pos,
+        min_len: Number.isFinite(body.min_len) ? body.min_len : undefined,
+        max_len: Number.isFinite(body.max_len) ? body.max_len : undefined,
+        is_cvcword_del_yn: body.is_cvcword_del_yn === 'Y' ? 'Y' : 'N',
+        is_only_noun_yn:  body.is_only_noun_yn  === 'Y' ? 'Y' : 'N',
+        suit_age: Number.isFinite(body.suit_age) ? body.suit_age : undefined,
+        orderby_ewords_yn: body.orderby_ewords_yn === 'Y' ? 'Y' : 'N'
+      }, 50)
+      const tr_words = words.map(w => w.word)
+      const coreword = tr_words[0] ?? ''
+      return json({ coreword, tr_words })
     }
 
     // GET /api/children/:id
