@@ -3237,15 +3237,15 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
               const ctgr    = errCtgr(e)
               if (!phoneme || !ctgr) continue
               const posLabel = POS_LABEL[e.pos] ?? e.pos
+              // 모음(중성)은 아동 커스텀의 진단/치료 대상이 아니므로 진단 리포트·취약 후보에서 제외
+              if (/중성$/.test(posLabel)) continue
               const key = `${e.pos}|${phoneme}|${ctgr}`
               if (!seen.has(key)) {
                 seen.add(key)
                 diagReport.push({ pos: posLabel, phoneme, type: ctgr })
               }
-              // 취약한 발음 집계 — (pos, phoneme) 묶음, 어말종성=받침 / 어중종성=받침 / 초성=자음 / 중성=모음
-              const category: '자음' | '받침' | '모음' =
-                /종성$/.test(e.pos) ? '받침' :
-                /중성$/.test(e.pos) ? '모음' : '자음'
+              // 취약한 발음 집계 — (pos, phoneme) 묶음, 종성=받침 / 초성=자음
+              const category: '자음' | '받침' = /종성$/.test(posLabel) ? '받침' : '자음'
               const wkey = `${posLabel}|${phoneme}`
               const wexist = weakMap.get(wkey)
               if (wexist) wexist.count++
@@ -3328,10 +3328,13 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           const aj = tlog.summary?.aim_joum; const ap = tlog.summary?.aim_pos
           if (aj && ap) {
             const posLabel = POS_LABEL[ap] ?? ap
-            const cat: '자음' | '받침' | '모음' = /JONG$/.test(ap) ? '받침' : /JUNG$/.test(ap) ? '모음' : '자음'
-            const exist = weakMap.get(`${posLabel}|${aj}`)
-            if (exist) exist.is_target = true
-            else targetWeak = { pos: posLabel, phoneme: aj, count: errMap.get(`${posLabel}|${aj}`) ?? 0, category: cat, is_target: true }
+            // 모음(중성) 목표는 대상이 아니므로 추가하지 않음
+            if (!/중성$/.test(posLabel)) {
+              const cat: '자음' | '받침' = /종성$/.test(posLabel) ? '받침' : '자음'
+              const exist = weakMap.get(`${posLabel}|${aj}`)
+              if (exist) exist.is_target = true
+              else targetWeak = { pos: posLabel, phoneme: aj, count: errMap.get(`${posLabel}|${aj}`) ?? 0, category: cat, is_target: true }
+            }
           }
         } catch { /* skip */ }
       }
