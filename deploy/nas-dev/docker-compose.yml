@@ -10,6 +10,10 @@ services:
     image: mariadb:10.3
     container_name: hidongdong-dev-db
     restart: unless-stopped
+    # DBeaver 등 GUI 접속용 — NAS loopback(127.0.0.1)에만 노출해 외부/타넷 차단.
+    # 접근은 SSH 터널(scon-nas)로 localhost:13306 → 컨테이너 3306.
+    ports:
+      - "127.0.0.1:13306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       MYSQL_DATABASE: ${DB_DATABASE:-wowkiki}
