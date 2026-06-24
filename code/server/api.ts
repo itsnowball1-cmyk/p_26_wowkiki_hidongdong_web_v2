@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { extractWords, type WordPos } from './dictionary.js'
 import { developmentRank, type GrowthGrade } from './joum_growth.js'
+import { openapiSpec } from './openapi.gen.js'
 
 // ─── 환경 타입 ───────────────────────────────────────────────────────────────
 
@@ -975,6 +976,38 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
     if (path === '/api/db-ping' && method === 'GET') {
       const [[{ v }]] = await conn.query('SELECT ? AS v', ['pong']) as [Array<{ v: string }>, unknown]
       return json({ ok: true, echo: v })
+    }
+
+    // ── API 문서 (Swagger UI) — 인증 불필요. 같은 오리진에서 Try it out 가능 ──
+    if (path === '/api/openapi.json' && method === 'GET') {
+      return json(openapiSpec)
+    }
+    if ((path === '/api/docs' || path === '/api/docs/') && method === 'GET') {
+      const htmlDoc = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>하이동동 API 문서</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
+  <script>
+    window.onload = function () {
+      window.ui = SwaggerUIBundle({
+        url: '/api/openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        persistAuthorization: true,
+        tryItOutEnabled: true
+      });
+    };
+  </script>
+</body>
+</html>`
+      return new Response(htmlDoc, { headers: { 'content-type': 'text/html; charset=utf-8' } })
     }
 
     // ════════════════════════════════════════════════════════════════════════
