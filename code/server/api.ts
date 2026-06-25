@@ -3969,11 +3969,23 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const base = env.FILES_BASE_URL.replace(/\/$/, '')
       const result = (fileRows as Array<RowDataPacket & { file_nm: string; source_file_nm: string }>)
         .filter(f => f.file_nm)
-        .map((f, i) => ({
-          index: i + 1,
-          word: (f.source_file_nm ?? '').replace(/\.[^/.]+$/, ''),
-          url: `${base}/dataCenter${f.file_nm}`
-        }))
+        .sort((a, b) => {
+          // idx_{actlogId}_{qz_nth}_{attempt}_{word}_{childWord}.wav 형식에서 qz_nth(문제 번호) 기준 숫자 정렬
+          const nA = parseInt((a.source_file_nm ?? '').split('_')[2] ?? '', 10)
+          const nB = parseInt((b.source_file_nm ?? '').split('_')[2] ?? '', 10)
+          if (!isNaN(nA) && !isNaN(nB)) return nA - nB
+          return (a.source_file_nm ?? '').localeCompare(b.source_file_nm ?? '')
+        })
+        .map((f, i) => {
+          const noExt = (f.source_file_nm ?? '').replace(/\.[^/.]+$/, '')
+          // idx_{id}_{n}_{attempt}_{word}_{childWord} 형식이면 표준 발음(word) 추출
+          const match = noExt.match(/^idx_\d+_\d+_\d+_(.+)_.+$/)
+          return {
+            index: i + 1,
+            word: match ? match[1] : noExt,
+            url: `${base}/dataCenter${f.file_nm}`
+          }
+        })
       return json(result)
     }
 
@@ -3990,11 +4002,21 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const treatBase = env.FILES_BASE_URL.replace(/\/$/, '')
       const treatResult = (fileRows as Array<RowDataPacket & { file_nm: string; source_file_nm: string }>)
         .filter(f => f.file_nm)
-        .map((f, i) => ({
-          index: i + 1,
-          word: (f.source_file_nm ?? '').replace(/\.[^/.]+$/, ''),
-          url: `${treatBase}/dataCenter${f.file_nm}`
-        }))
+        .sort((a, b) => {
+          const nA = parseInt((a.source_file_nm ?? '').split('_')[2] ?? '', 10)
+          const nB = parseInt((b.source_file_nm ?? '').split('_')[2] ?? '', 10)
+          if (!isNaN(nA) && !isNaN(nB)) return nA - nB
+          return (a.source_file_nm ?? '').localeCompare(b.source_file_nm ?? '')
+        })
+        .map((f, i) => {
+          const noExt = (f.source_file_nm ?? '').replace(/\.[^/.]+$/, '')
+          const match = noExt.match(/^idx_\d+_\d+_\d+_(.+)_.+$/)
+          return {
+            index: i + 1,
+            word: match ? match[1] : noExt,
+            url: `${treatBase}/dataCenter${f.file_nm}`
+          }
+        })
       return json(treatResult)
     }
 
