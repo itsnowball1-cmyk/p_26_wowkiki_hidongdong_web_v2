@@ -58,6 +58,8 @@ services:
       # 단어 사전 외부 편집 (운영과 동일 패턴, dev 전용 파일).
       # 변경 후 api 재시작(docker compose up -d --force-recreate api) 필요.
       - /volume1/docker/hidongdong_web_dev/data/words_dic.txt:/app/dist-server/data/words_dic.txt:ro
+      # 사용 단어 화이트리스트 — resource_wordsused.txt ∩ words_dic.txt 로 단어 풀 구성
+      - /volume1/docker/hidongdong_web_dev/data/resource_wordsused.txt:/app/dist-server/data/resource_wordsused.txt:ro
     depends_on:
       db:
         condition: service_healthy

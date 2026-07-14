@@ -3520,7 +3520,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json({ idx: ins.insertId, action: 'insert' })
     }
 
-    // POST /api/children/:id/custom/extract — 단어 사전(words_dic.txt) 에서
+    // POST /api/children/:id/custom/extract — 사용 단어(resource_wordsused.txt ∩ words_dic.txt) 에서
     // (aim_joum, pos) + 필터로 후보 추출. 사전은 dictionary.ts 가 캐시.
     // 알고리즘: DataMgr_Joum.cs GenerateTrainWordList 파이프라인 그대로 (FilterAdoptAge,
     // FilterOjoumButTarget, FilterExceptNoun, FilterCVCWord, FilterWordLen, OrderByWordLen,

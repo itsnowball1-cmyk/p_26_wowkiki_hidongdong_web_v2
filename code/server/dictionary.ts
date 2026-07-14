@@ -6,11 +6,17 @@
 // 원칙: [[feedback-client-joum-source-of-truth]]
 //
 // 데이터 출처: 참고_client/_Project/data/{words_dic,hangul_ipa_mfa}.txt
-//   - words_dic.txt    : word,pron,pumsa(int),fitAge(int)
-//   - hangul_ipa_mfa.txt: hangul,ipa,mfa
+//   - words_dic.txt         : word,pron,pumsa(int),fitAge(int)  — 단어 메타데이터(발음/품사/적정나이)
+//   - resource_wordsused.txt: word (줄당 1개)  — 실제 "사용 단어" 화이트리스트
+//   - hangul_ipa_mfa.txt    : hangul,ipa,mfa
 //
-// 외부 편집 가능: 운영 환경에서는 호스트의 words_dic.txt 가 컨테이너
-// /app/dist-server/data/words_dic.txt 로 마운트됨 (deploy/nas/docker-compose.yml).
+// 단어 풀 구성(client 와 동일): resource_wordsused.txt 의 각 단어를 words_dic.txt 에서 찾아
+//   메타데이터를 붙인 교집합만 사용. (client APIRes_GetWordUsedTable.Fetch → WordAnalUsedDataTable,
+//   GenerateJoumPosWordList 가 WordAnalUsedDataTable 순회 — DataMgr_Joum.cs:2495)
+//   dic 에 없는 사용단어는 제외. resource_wordsused.txt 가 없으면 전체 dic 로 폴백.
+//
+// 외부 편집 가능: 운영 환경에서는 호스트의 words_dic.txt / resource_wordsused.txt 가 컨테이너
+// /app/dist-server/data/ 아래로 마운트됨 (deploy/nas/docker-compose.yml).
 // 변경 후 api 컨테이너 재기동하면 새 사전이 로드됨.
 
 import { readFileSync } from 'node:fs'
@@ -119,21 +125,41 @@ let cachedIpa:   IpaEntry[] | null = null
 
 export function loadDictionary(): { words: DicWord[]; index: Map<string, DicWord[]> } {
   if (cachedWords && cachedIndex) return { words: cachedWords, index: cachedIndex }
-  const raw = readFileSync(join(DATA_DIR, 'words_dic.txt'), 'utf-8')
-  const words: DicWord[] = []
-  for (const line of raw.split(/\r?\n/)) {
+
+  // 1) words_dic.txt → 단어별 메타데이터(pron/pumsa/fitAge) 맵. 중복 단어는 첫 항목 우선.
+  const dicRaw = readFileSync(join(DATA_DIR, 'words_dic.txt'), 'utf-8')
+  const dicMap = new Map<string, DicWord>()
+  for (const line of dicRaw.split(/\r?\n/)) {
     const t = line.trim(); if (!t) continue
     const parts = t.split(',')
     if (parts.length < 4) continue
     const [word, pron, pumsaS, ageS] = parts
-    if (!word) continue
-    words.push({
-      word: word.trim(),
-      pron: (pron ?? word).trim(),
+    const w = word.trim(); if (!w || dicMap.has(w)) continue
+    dicMap.set(w, {
+      word: w,
+      pron: (pron ?? w).trim(),
       pumsa: Number(pumsaS) || 0,
       fitAge: Number(ageS) || 0
     })
   }
+
+  // 2) resource_wordsused.txt(사용 단어 화이트리스트)의 각 단어를 dic 에서 찾아 풀 구성.
+  //    (client APIRes_GetWordUsedTable.Fetch 와 동일 — dic 에 없는 단어는 제외)
+  //    파일이 없으면 전체 dic 로 폴백(로컬/초기 환경 안전장치).
+  const words: DicWord[] = []
+  try {
+    const usedRaw = readFileSync(join(DATA_DIR, 'resource_wordsused.txt'), 'utf-8')
+    const seen = new Set<string>()
+    for (const line of usedRaw.split(/\r?\n/)) {
+      const w = line.trim(); if (!w || seen.has(w)) continue
+      seen.add(w)
+      const hit = dicMap.get(w)
+      if (hit) words.push(hit)
+    }
+  } catch {
+    for (const w of dicMap.values()) words.push(w)
+  }
+
   // (joum, pos) 별 단어 인덱스 — GenerateJoumPosWordList 의 입력
   const idx = new Map<string, DicWord[]>()
   for (const w of words) {
