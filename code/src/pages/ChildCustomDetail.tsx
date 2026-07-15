@@ -73,9 +73,9 @@ export default function ChildCustomDetail({ id }: Props) {
           orderby_evowels_yn: (t.orderby_evowels_yn as 'Y' | 'N') ?? 'N',
           orderby_ewords_yn: (t.orderby_ewords_yn as 'Y' | 'N') ?? 'Y'
         })
-        setCoreWord(t.coreword || (t.tr_words[0] ?? null))
-        // coreword 는 chip 으로 따로 표시되므로 tr_words 에서 제외하고 훈련 목록 + 후보로 분할
-        const remaining = t.tr_words.filter(w => w !== t.coreword)
+        setCoreWord(t.tr_words[0] ?? null)
+        // coreword(모음 설정)는 칩 표시에 사용하지 않음. tr_words 첫 번째가 핵심단어.
+        const remaining = t.tr_words.slice(1)
         const tcount = Math.min(gameCount, remaining.length)
         setTrainingList(remaining.slice(0, tcount))
         setCandidateList(remaining.slice(tcount))
@@ -113,11 +113,8 @@ export default function ChildCustomDetail({ id }: Props) {
         orderby_ewords_yn: custom.orderby_ewords_yn
       })
       const words = r.tr_words
-      // 사용자가 핵심 단어를 입력해 두었으면 그것을 유지·적용한다.
-      // (원본 C# 은 항상 generatedWords[0] 로 덮어쓰지만, 여기서는 사용자가 지정한 핵심 단어를 우선)
-      const userCore = (custom.coreword ?? '').trim()
-      const core = userCore || r.coreword || words[0] || null
-      setCustom(c => ({ ...c, coreword: core ?? '' }))
+      // 핵심단어 칩은 추출 결과 첫 번째 단어. custom.coreword는 모음 설정이므로 덮어쓰지 않음.
+      const core = r.coreword || words[0] || null
       setCoreWord(core)
       const after = words.filter(w => w !== core)
       setTrainingList(after.slice(0, gameCount))
@@ -164,7 +161,7 @@ export default function ChildCustomDetail({ id }: Props) {
       ]
       const r = await api.customSave(id, {
         idx: custom.idx ?? undefined,
-        aim_joum: custom.aim_joum, pos: custom.pos, coreword: coreWord ?? custom.coreword,
+        aim_joum: custom.aim_joum, pos: custom.pos, coreword: custom.coreword,
         tr_words,
         suit_age: custom.suit_age, growth_grade: custom.growth_grade,
         is_ojoum_del_yn: custom.is_ojoum_del_yn,
@@ -176,6 +173,10 @@ export default function ChildCustomDetail({ id }: Props) {
         orderby_ewords_yn: custom.orderby_ewords_yn
       })
       setCustom(c => ({ ...c, idx: r.idx }))
+      // 현재 학습 내용 즉시 갱신 (tb_trainingset 저장은 tb_childact_report에 영향 없으므로 클라이언트에서 직접 반영)
+      const now = new Date()
+      const at = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`
+      setDetail(d => d ? { ...d, current: { sound: `${custom.pos} ${custom.aim_joum}`, by: d.doctor_name, at } } : d)
       alert(r.action === 'insert' ? '새 trainingset 으로 저장되었습니다.' : '저장되었습니다.')
     } catch (e) {
       console.error(e); alert('저장 실패')
@@ -957,6 +958,7 @@ function StatusRow({ label, children }: { label: string; children: React.ReactNo
 /* ---------------------------------- */
 const POSITION_OPTIONS = ['어두초성', '어중초성', '어중종성', '어말종성']
 const CONSONANT_OPTIONS = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']
+const VOWEL_OPTIONS = ['ㅏ', 'ㅓ', 'ㅗ', 'ㅜ', 'ㅡ', 'ㅣ', 'ㅐ', 'ㅔ']
 
 function TargetArticulationPanel({ value, onChange }: {
   value: { aim_joum: string; pos: string; coreword: string; orderby_evowels_yn: 'Y' | 'N'; orderby_ewords_yn: 'Y' | 'N' }
@@ -971,13 +973,8 @@ function TargetArticulationPanel({ value, onChange }: {
       <div className="space-y-4 mb-8">
         <FieldRow label="목표 위치"><Select value={value.pos} onChange={v => onChange({ pos: v })} options={positionOpts} /></FieldRow>
         <FieldRow label="목표 조음"><Select value={value.aim_joum} onChange={v => onChange({ aim_joum: v })} options={consonantOpts} /></FieldRow>
-        <FieldRow label="핵심 단어">
-          <input
-            value={value.coreword}
-            onChange={e => onChange({ coreword: e.target.value })}
-            placeholder="대표 단어 (예: 다리)"
-            className="w-full h-9 px-3 border border-line rounded-[5px] text-[14px] focus:outline-none focus:border-brand"
-          />
+        <FieldRow label="핵심 1음절 모음">
+          <Select value={VOWEL_OPTIONS.includes(value.coreword) ? value.coreword : VOWEL_OPTIONS[0]} onChange={v => onChange({ coreword: v })} options={VOWEL_OPTIONS} />
         </FieldRow>
       </div>
       <div className="border-t border-line pt-5">
