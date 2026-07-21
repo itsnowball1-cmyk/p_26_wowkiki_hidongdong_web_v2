@@ -11,6 +11,7 @@ export default function ChildManagement() {
   const [assigned, setAssigned] = useState<AssignedChild[]>([])
   const [unassigned, setUnassigned] = useState<UnassignedChild[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [selectedAssigned, setSelectedAssigned] = useState<Set<number>>(new Set())
   const [filter, setFilter] = useState<'active' | 'dormant' | 'all'>('active')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -78,6 +79,29 @@ export default function ChildManagement() {
     setSelected(new Set())
   }
 
+  const toggleAssignedRow = (id: number) => {
+    setSelectedAssigned((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleUnassign = async () => {
+    const ids = [...selectedAssigned]
+    if (!ids.length) return
+    if (!confirm(`선택한 아동 ${ids.length}명을 내 배정에서 제거할까요?\n제거된 아동은 미배정 목록으로 이동합니다.`)) return
+    await api.unassignFromMe(ids)
+    const [a, u] = await Promise.all([
+      api.assignedChildren(),
+      api.unassignedChildren()
+    ])
+    setAssigned(a)
+    setUnassigned(u)
+    setSelectedAssigned(new Set())
+  }
+
   return (
     <div className="min-h-screen flex bg-surface">
       <Sidebar />
@@ -89,10 +113,20 @@ export default function ChildManagement() {
           {/* Section 1 — 아동 목록 */}
           <section>
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-              <h2 className="text-[18px] font-semibold">
-                <span className="text-ink-400">아동 목록 </span>
-                <span className="text-brand">{filteredAssigned.length}</span>
-              </h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-[18px] font-semibold">
+                  <span className="text-ink-400">아동 목록 </span>
+                  <span className="text-brand">{filteredAssigned.length}</span>
+                </h2>
+                <button
+                  type="button"
+                  onClick={handleUnassign}
+                  disabled={selectedAssigned.size === 0}
+                  className="h-9 px-4 rounded-[5px] border border-[#FF5151] text-[#FF5151] text-[15px] font-medium disabled:border-ink-300 disabled:text-ink-300 disabled:cursor-not-allowed hover:bg-[#FF5151]/5 transition"
+                >
+                  배정 제거 {selectedAssigned.size > 0 && `(${selectedAssigned.size})`}
+                </button>
+              </div>
 
               <div className="hidden md:flex items-center gap-5 text-[15px]">
                 <FilterRadio label="활성화 유저" checked={filter === 'active'} onChange={() => setFilter('active')} />
@@ -107,6 +141,7 @@ export default function ChildManagement() {
               <table className="w-full min-w-[900px] text-[15px]">
                 <thead>
                   <tr className="border-b border-line bg-line-soft">
+                    <Th className="w-10"><span className="sr-only">선택</span></Th>
                     <Th>순번</Th>
                     <Th>이름(나이)</Th>
                     <Th>식별코드</Th>
@@ -121,14 +156,14 @@ export default function ChildManagement() {
                 <tbody>
                   {loading && Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}>
-                      {[28, 80, 80, 80, 48, 80, 96, 64, 96].map((w, j) => (
+                      {[20, 28, 80, 80, 80, 48, 80, 96, 64, 96].map((w, j) => (
                         <Td key={j}><div className="h-4 rounded animate-pulse bg-line mx-auto" style={{ width: w }} /></Td>
                       ))}
                     </tr>
                   ))}
                   {!loading && filteredAssigned.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="h-[80px] text-center text-ink-400">검색 결과가 없습니다.</td>
+                      <td colSpan={10} className="h-[80px] text-center text-ink-400">검색 결과가 없습니다.</td>
                     </tr>
                   )}
                   {!loading && pagedAssigned.map((row, i) => (
@@ -137,6 +172,15 @@ export default function ChildManagement() {
                       onClick={() => go({ name: 'detail', id: row.id })}
                       className="cursor-pointer hover:bg-surface-active transition-colors"
                     >
+                      <Td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedAssigned.has(row.id)}
+                          onChange={() => toggleAssignedRow(row.id)}
+                          className="w-5 h-5 rounded-[3px] border border-line-dark accent-brand align-middle"
+                          aria-label={`assigned-row-${i + 1}-select`}
+                        />
+                      </Td>
                       <Td className="text-ink-600">{(assignedPage - 1) * PAGE_SIZE + i + 1}</Td>
                       <Td className="text-ink-700">
                         {row.child_name ?? '-'}{row.age_label ? `(${row.age_label})` : ''}
@@ -246,9 +290,9 @@ function Th({ children, className = '' }: { children: React.ReactNode; className
   )
 }
 
-function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+function Td({ children, className = '', onClick }: { children: React.ReactNode; className?: string; onClick?: React.MouseEventHandler<HTMLTableCellElement> }) {
   return (
-    <td className={`h-[52px] px-3 text-center border-t border-line ${className}`}>{children}</td>
+    <td onClick={onClick} className={`h-[52px] px-3 text-center border-t border-line ${className}`}>{children}</td>
   )
 }
 

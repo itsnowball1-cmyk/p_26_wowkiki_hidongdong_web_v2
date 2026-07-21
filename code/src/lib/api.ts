@@ -474,6 +474,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids })
     }),
+  unassignFromMe: (ids: number[]) =>
+    apiFetch<{ moved: number }>('/children/unassign-from-me', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    }),
   childDetail: (id: number) => apiFetch<ChildDetailDto>(`/children/${id}`),
   childDiagnoses: (id: number) => apiFetch<DiagnosisListItem[]>(`/children/${id}/diagnoses`),
   childTreatments: (id: number) => apiFetch<TreatmentListItem[]>(`/children/${id}/treatments`),
