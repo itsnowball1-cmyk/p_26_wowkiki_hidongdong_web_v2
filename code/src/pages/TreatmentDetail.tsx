@@ -423,6 +423,7 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
             {recordingGroups.length > 0 && (
               <section data-pdf-exclude>
                 <SectionTitle>치료녹음 듣기</SectionTitle>
+                <p className="text-[13px] text-ink-400 -mt-3 mb-4">파일 다운로드 시 녹음 내용은 함께 저장되지 않습니다.</p>
                 <div className="space-y-6">
                   {recordingGroups.map(group => (
                     <RecordingGroup key={group.key} label={group.label} tiles={group.tiles} />
@@ -433,31 +434,40 @@ export default function TreatmentDetail({ childId, treatmentId }: Props) {
           </div>
 
           {/* Pager */}
-          <div className="flex items-center justify-center gap-4 pt-4 pb-12">
+          <div className="flex flex-col items-center gap-4 pt-4 pb-12">
+            <div className="flex items-center justify-center gap-4">
+              <button
+                type="button"
+                disabled={prevTreatmentId === null}
+                className={prevTreatmentId !== null
+                  ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                  : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+                }
+                onClick={() => prevTreatmentId !== null && go({ name: 'treatment', childId, treatmentId: prevTreatmentId })}
+              >
+                &lt; 이전
+              </button>
+              <span className="text-[18px] font-medium text-ink-900">
+                {detail?.treated_at ?? '-'}
+              </span>
+              <button
+                type="button"
+                disabled={nextTreatmentId === null}
+                className={nextTreatmentId !== null
+                  ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                  : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+                }
+                onClick={() => nextTreatmentId !== null && go({ name: 'treatment', childId, treatmentId: nextTreatmentId })}
+              >
+                다음 &gt;
+              </button>
+            </div>
             <button
               type="button"
-              disabled={prevTreatmentId === null}
-              className={prevTreatmentId !== null
-                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
-                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
-              }
-              onClick={() => prevTreatmentId !== null && go({ name: 'treatment', childId, treatmentId: prevTreatmentId })}
+              onClick={() => go({ name: 'detail', id: childId })}
+              className="text-[14px] text-ink-900 underline underline-offset-4 hover:text-brand transition-colors"
             >
-              &lt; 이전
-            </button>
-            <span className="text-[18px] font-medium text-ink-900">
-              {detail?.treated_at ?? '-'}
-            </span>
-            <button
-              type="button"
-              disabled={nextTreatmentId === null}
-              className={nextTreatmentId !== null
-                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
-                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
-              }
-              onClick={() => nextTreatmentId !== null && go({ name: 'treatment', childId, treatmentId: nextTreatmentId })}
-            >
-              다음 &gt;
+              목록으로 돌아가기
             </button>
           </div>
 

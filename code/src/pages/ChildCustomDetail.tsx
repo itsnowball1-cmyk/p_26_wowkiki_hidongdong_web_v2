@@ -568,7 +568,7 @@ export default function ChildCustomDetail({ id }: Props) {
             </div>
 
             <div className="bg-surface-card border border-[#DEDEDE] rounded-[10px] px-6 py-5 space-y-3 min-h-[137px]">
-              <StatusRow label="현재 학습 내용">
+              <StatusRow label="현재 훈련 내용">
                 {detail?.current ? (
                   <>
                     <span className="text-[#FF6060] font-medium">{detail.current.sound}</span>
@@ -578,7 +578,7 @@ export default function ChildCustomDetail({ id }: Props) {
                   </>
                 ) : <span className="text-[#AAAAAA]">학습 기록이 없습니다.</span>}
               </StatusRow>
-              <StatusRow label="예약된 학습 내용">
+              <StatusRow label="예약된 훈련 내용">
                 {detail?.reserved && typeof detail.reserved === 'object' && 'sound' in detail.reserved
                   ? <span className="text-[#FF6060] font-medium">{(detail.reserved as { sound: string }).sound}</span>
                   : <span className="text-[#AAAAAA]">예약된 정보가 없습니다.</span>}

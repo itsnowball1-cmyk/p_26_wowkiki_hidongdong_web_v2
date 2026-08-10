@@ -258,7 +258,7 @@ export default function InstitutionDetailPage({ id }: { id: string }) {
                 <span className="text-[#585858]">{m.name}({calcAge(m.birth_date)})</span>
                 <span className="text-[#484848]">{m.code ?? '-'}</span>
                 <span className="text-[#484848]">{m.birth_date ?? '-'}</span>
-                <span className="text-[#585858]">{m.is_male ? '남아' : '여아'}</span>
+                <span className="text-[#585858]">{m.is_male ? '남' : '여'}</span>
                 <span className="text-[#585858]">{m.regist_date}</span>
               </div>
             ))}
