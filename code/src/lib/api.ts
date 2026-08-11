@@ -26,6 +26,12 @@ export type AssignedChild = {
   next_therapy_appointment: string | null
 }
 
+export type ChildFolder = {
+  id: number
+  folder_name: string
+  child_ids: number[]
+}
+
 export type StaffItem = {
   code: string
   name: string
@@ -474,6 +480,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids })
     }),
+  childFolders: () => apiFetch<ChildFolder[]>('/child-folders'),
+  createChildFolder: (folder_name: string, child_ids: number[]) =>
+    apiFetch<ChildFolder>('/child-folders', {
+      method: 'POST',
+      body: JSON.stringify({ folder_name, child_ids })
+    }),
+  updateChildFolder: (id: number, folder_name: string, child_ids: number[]) =>
+    apiFetch<ChildFolder>(`/child-folders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ folder_name, child_ids })
+    }),
+  deleteChildFolder: (id: number) =>
+    apiFetch<{ ok: true }>(`/child-folders/${id}`, { method: 'DELETE' }),
   childDetail: (id: number) => apiFetch<ChildDetailDto>(`/children/${id}`),
   childDiagnoses: (id: number) => apiFetch<DiagnosisListItem[]>(`/children/${id}/diagnoses`),
   childTreatments: (id: number) => apiFetch<TreatmentListItem[]>(`/children/${id}/treatments`),

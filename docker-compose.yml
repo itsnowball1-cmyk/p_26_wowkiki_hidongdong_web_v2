@@ -1,32 +1,22 @@
 services:
   db:
-    image: mariadb:10.3
+    image: postgres:17
     container_name: hidongdong-db
     restart: unless-stopped
     environment:
-      # MariaDB 10.3 이미지는 MYSQL_* prefix 만 인식 (MARIADB_* 는 10.4+)
-      MYSQL_ROOT_PASSWORD: localdev
-      MYSQL_DATABASE: wowkiki
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: wowkiki
     ports:
-      # 호스트 포트 충돌이 나면 좌측만 바꾸세요 (예: "3307:3306")
-      # 그 경우 code/.dev.vars 의 DB_PORT 도 함께 변경
-      - "3306:3306"
+      # 호스트 포트 충돌이 나면 좌측만 바꾸세요 (예: "5433:5432")
+      # 그 경우 code/.env 의 DB_PORT 도 함께 변경
+      - "5432:5432"
     volumes:
-      - hidongdong-db-data:/var/lib/mysql
-      # 데이터: 271543 (init.sh 가 sandbox 라인 제거 후 import)
-      - ./backup/dump-wowkiki_live-202606042143.sql:/tmp/dump.sql:ro
-      - ./db/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
-      # 스키마: 271833 추가분(tb_member 2컬럼 + 신규 5테이블)을 데이터 적재 후 얹음
-      - ./db/schema-delta.sql:/docker-entrypoint-initdb.d/02-schema-delta.sql:ro
-      # tb_terms: 약관 테이블 (덤프엔 없는 신규 객체)
-      - ./db/tb_terms-202606021644.sql:/docker-entrypoint-initdb.d/03-tb-terms.sql:ro
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+      - hidongdong-db-data:/var/lib/postgresql/data
+      # 초기 데이터는 docker-entrypoint-initdb.d 자동 스크립트가 아니라
+      # db/restore-dev-dump.sh 로 별도 복원한다 (실제 dev Postgres pgAdmin 백업, custom format).
     healthcheck:
-      # healthcheck.sh 는 기본 credential 만 사용해서 root 비번 설정시 실패함.
-      # mysqladmin ping 으로 직접 확인.
-      test: ["CMD-SHELL", "mysqladmin --user=root --password=$$MYSQL_ROOT_PASSWORD ping --silent"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wowkiki"]
       interval: 5s
       timeout: 5s
       retries: 30

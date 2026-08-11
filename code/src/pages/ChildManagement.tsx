@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import Sidebar from '../components/Sidebar'
 import TopBar from '../components/TopBar'
+import FolderModals from '../components/FolderModals'
 import { useRouter } from '../lib/router'
-import { api, type AssignedChild, type UnassignedChild } from '../lib/api'
+import { api, type AssignedChild, type ChildFolder, type UnassignedChild } from '../lib/api'
 
 const PAGE_SIZE = 10
 
@@ -13,6 +14,8 @@ export default function ChildManagement() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [filter, setFilter] = useState<'active' | 'dormant' | 'all'>('active')
   const [query, setQuery] = useState('')
+  const [folders, setFolders] = useState<ChildFolder[]>([])
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [assignedPage, setAssignedPage] = useState(1)
   const [unassignedPage, setUnassignedPage] = useState(1)
@@ -26,15 +29,19 @@ export default function ChildManagement() {
 
   const q = query.trim().toLowerCase()
 
+  const activeFolder = activeFolderId == null ? null : folders.find((f) => f.id === activeFolderId) ?? null
+
   const filteredAssigned = useMemo(() => {
     setAssignedPage(1)
-    if (!q) return assigned
-    return assigned.filter((r) =>
+    let rows = assigned
+    if (activeFolder) rows = rows.filter((r) => activeFolder.child_ids.includes(r.id))
+    if (!q) return rows
+    return rows.filter((r) =>
       [r.child_name, r.identifier, r.birth_date, r.gender, r.app_login_id, r.therapist_name, r.next_doctor_appointment, r.next_therapy_appointment]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     )
-  }, [assigned, q])
+  }, [assigned, q, activeFolder])
 
   const filteredUnassigned = useMemo(() => {
     setUnassignedPage(1)
@@ -101,6 +108,15 @@ export default function ChildManagement() {
               </div>
 
               <SearchBox value={query} onChange={setQuery} />
+            </div>
+
+            <div className="mb-4 overflow-x-auto">
+              <FolderModals
+                assigned={assigned}
+                activeFolderId={activeFolderId}
+                onActiveFolderChange={setActiveFolderId}
+                onFoldersChange={setFolders}
+              />
             </div>
 
             <div className="overflow-x-auto rounded-md border border-line bg-surface-card">
