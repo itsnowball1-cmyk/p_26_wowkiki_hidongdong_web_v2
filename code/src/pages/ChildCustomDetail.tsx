@@ -73,12 +73,13 @@ export default function ChildCustomDetail({ id }: Props) {
           orderby_evowels_yn: (t.orderby_evowels_yn as 'Y' | 'N') ?? 'N',
           orderby_ewords_yn: (t.orderby_ewords_yn as 'Y' | 'N') ?? 'Y'
         })
-        setCoreWord(t.tr_words[0] ?? null)
-        // coreword(모음 설정)는 칩 표시에 사용하지 않음. tr_words 첫 번째가 핵심단어.
-        const remaining = t.tr_words.slice(1)
-        const tcount = Math.min(gameCount, remaining.length)
-        setTrainingList(remaining.slice(0, tcount))
-        setCandidateList(remaining.slice(tcount))
+        // 핵심단어 = DB tb_trainingset.coreword. tr_words 는 핵심단어와 별개인 훈련단어 전체 목록.
+        //   (옛 동작: tr_words[0] 을 핵심단어로 뽑고 나머지만 훈련단어로 표시 → coreword 미표시 + tr_words[0] 누락.)
+        setCoreWord(t.coreword || null)
+        const words = t.tr_words
+        const tcount = Math.min(gameCount, words.length)
+        setTrainingList(words.slice(0, tcount))
+        setCandidateList(words.slice(tcount))
         setCustomWords([])
         setExtracted(true)
       }
@@ -153,15 +154,15 @@ export default function ChildCustomDetail({ id }: Props) {
     if (saving) return
     setSaving(true)
     try {
+      // 훈련단어 = 훈련/후보/직접추가 (핵심단어 제외). 핵심단어는 coreword 컬럼으로 별도 저장.
       const tr_words = [
-        ...(coreWord ? [coreWord] : []),
         ...trainingList,
         ...candidateList,
         ...customWords
       ]
       const r = await api.customSave(id, {
         idx: custom.idx ?? undefined,
-        aim_joum: custom.aim_joum, pos: custom.pos, coreword: custom.coreword,
+        aim_joum: custom.aim_joum, pos: custom.pos, coreword: coreWord ?? '',
         tr_words,
         suit_age: custom.suit_age, growth_grade: custom.growth_grade,
         is_ojoum_del_yn: custom.is_ojoum_del_yn,
