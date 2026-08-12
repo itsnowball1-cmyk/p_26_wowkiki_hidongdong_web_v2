@@ -489,6 +489,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids })
     }),
+  unassignFromMe: (ids: number[]) =>
+    apiFetch<{ moved: number }>('/children/unassign-from-me', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    }),
   childFolders: () => apiFetch<ChildFolder[]>('/child-folders'),
   createChildFolder: (folder_name: string, child_ids: number[]) =>
     apiFetch<ChildFolder>('/child-folders', {
