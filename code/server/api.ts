@@ -3265,6 +3265,29 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json({ moved: result.affectedRows })
     }
 
+    // POST /api/children/unassign-from-me — 본인에게 배정된 아동을 배정 해제 (assign-to-me 의 역).
+    //   코드 컬럼을 NULL 로 → 미배정 목록(코드 IS NULL/'' 기준)에 자동 표시. 본인 배정분만 해제(보안).
+    if (path === '/api/children/unassign-from-me' && method === 'POST') {
+      const isDoctor  = user.mtype === 'doctor'
+      const isHealler = user.mtype === 'teacher'
+      if (!isDoctor && !isHealler) return err(403, '의사 또는 치료사만 배정을 해제할 수 있습니다.')
+      const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
+      const ids  = body.ids ?? []
+      if (!ids.length) return json({ moved: 0 })
+      const staffCode  = user.code || user.id
+      const codeCol    = isDoctor ? 'doctor_code' : 'teacher_code'
+      const [result] = await conn.query<ResultSetHeader>(
+        `UPDATE tb_member
+         SET ${codeCol} = NULL, update_date = NOW()
+         WHERE idx IN (${ph(ids.length)})
+           AND mtype = 'child'
+           AND instt_code = ?
+           AND ${codeCol} = ?`,
+        [...ids, user.instt_code, staffCode]
+      )
+      return json({ moved: result.affectedRows })
+    }
+
     // ── 아동 폴더(의사/치료사가 담당 아동을 임의로 묶는 그룹) ──────────────────
     if (path === '/api/child-folders' && (method === 'GET' || method === 'POST')) {
       if (user.mtype !== 'doctor' && user.mtype !== 'teacher') return err(403, '의사 또는 치료사만 사용할 수 있습니다.')
