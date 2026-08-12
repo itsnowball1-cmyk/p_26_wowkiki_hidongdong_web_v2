@@ -5,11 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DUMP=backup/dump-postgres-202608111024.sql
+DUMP="${1:-backup/dump-postgres-202608111024.sql}"
 if [ ! -f "$DUMP" ]; then
   echo "[restore] $DUMP 없음" >&2
   exit 1
 fi
+
+echo "[restore] 기존 로컬 데이터 초기화(새 dump로 덮어쓰기 위해 볼륨 삭제 후 재기동)..."
+docker compose down -v 2>/dev/null || true
 
 echo "[restore] target(postgres) 기동..."
 docker compose up -d db

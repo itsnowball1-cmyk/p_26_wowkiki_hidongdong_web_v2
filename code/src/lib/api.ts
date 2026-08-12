@@ -227,7 +227,16 @@ export type DiagnosisDetailDto = {
   mispronunciations: { word: string; ch_pron: string }[]
   error_position: { phoneme: string; count: number; types: string; positions: string }[]
   error_rank: { rank: number; type: string; ratio: string }[]
-  stimulability: unknown[]
+  stimulability: StimulusRow[]
+}
+
+export type StimulusRow = {
+  target: string
+  first: string
+  firstError: string
+  firstAccuracy: number | null
+  second: string | null
+  secondAccuracy: number | null
 }
 
 export type FaqListItem = {

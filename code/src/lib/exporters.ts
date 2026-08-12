@@ -222,7 +222,10 @@ export async function exportElementToPdf(
     }
   })
 
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  // 진단 상세페이지엔 표가 넓은 섹션(자극반응도 등)이 많아 A4로 누르면 글씨가 작아짐.
+  // 캡처된 화면 내용은 그대로, 페이지 물리 크기만 키워서(A4→A3) 같은 내용이 더 넓은
+  // 폭에 펴지게 해 글자를 실제로 더 크게 만든다 (landscape 전환만으론 부족했음).
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' })
 
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()

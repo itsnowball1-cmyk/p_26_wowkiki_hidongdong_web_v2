@@ -367,8 +367,20 @@ const E_CTGR_LABEL: Record<string, string> = {
   DISTORTION: '왜곡', DISTORT: '왜곡'
 }
 
+// "하이동동" 종합진단(act_type='hidongdong') 35개 검사어의 단어별 공식 목표 자음.
+// UTAP_PCC(자음정확도) 계산 기준 — hj9999/whale1 실데이터로 검증 완료(정확히 일치).
+const HIDONGDONG_TARGET_CONSONANT: Record<string, string> = {
+  '곰': 'ㅁ', '과자': 'ㅈ', '구급차': 'ㅂ', '국자': 'ㄱ', '귀': 'ㄱ', '까치': 'ㄲ',
+  '냄비': 'ㄴ', '눈썹': 'ㅆ', '다리': 'ㄷ', '돼지': 'ㅈ', '딸기': 'ㄹ', '레몬': 'ㅁ',
+  '마이크': 'ㅁ', '바나나': 'ㅂ', '버섯': 'ㄷ', '빵': 'ㅇ', '사탕': 'ㅅ', '수박': 'ㄱ',
+  '찌개': 'ㅉ', '씨앗': 'ㅆ', '아빠': 'ㅃ', '야구': 'ㄱ', '여우': 'ㅇ', '연필': 'ㄹ',
+  '오뚜기': 'ㄸ', '요거트': 'ㅌ', '우유': 'ㅇ', '원숭이': 'ㅅ', '의자': 'ㅈ', '자동차': 'ㅊ',
+  '책상': 'ㅊ', '코끼리': 'ㅋ', '타조': 'ㅌ', '펭귄': 'ㅍ', '하마': 'ㅎ'
+}
+
+// prcntl 은 실데이터에서 항상 0(미계산 placeholder) — "수준" 컬럼의 lv=0→'-' 과 동일하게 처리.
 function prcntlLabel(p: number): string {
-  return p <= 0 ? '1%ile 이하' : `${Math.round(p)}%ile`
+  return p <= 0 ? '-' : `${Math.round(p)}%ile`
 }
 
 function lvLabel(lv: number): string {
@@ -408,6 +420,107 @@ type DiagDetail = {
   error_position: { phoneme: string; count: number; types: string; positions: string }[]
   error_rank: { rank: number; type: string; ratio: string }[]
   stimulability: unknown[]
+}
+
+type StimulusRow = {
+  target: string
+  first: string
+  firstError: string
+  firstAccuracy: number | null
+  second: string | null
+  secondAccuracy: number | null
+}
+
+// speechlog.logLst[] 에서 단어(wrd) → { 정확도(wrdAc, 0~1 = 표준발음과의 일치도), 정답 발음(pron) } 맵.
+function speechInfoMap(raw: string | null): Map<string, { acc: number; pron: string }> {
+  const map = new Map<string, { acc: number; pron: string }>()
+  if (!raw) return map
+  try {
+    const log = JSON.parse(raw) as { logLst?: Array<{ wrd?: string; wrdAc?: number; pron?: string }> }
+    for (const item of log.logLst ?? []) {
+      if (item.wrd != null && item.wrdAc != null) map.set(item.wrd, { acc: item.wrdAc, pron: item.pron ?? item.wrd })
+    }
+  } catch { /* 무시 */ }
+  return map
+}
+
+// 개정 자음정확도(PCC-R) — HIDONGDONG_TARGET_CONSONANT 의 단어별 목표 자음 기준으로,
+// 그 자음이 대치/생략(CHANGE/OMIT)이면 오류, 왜곡(DISTORTION)이면 정확 처리(=PCC와의 차이).
+// 목표 자음이 실제로 이 진단에서 검사됐는지는 speechlog 로 확인(짧은/커스텀 진단 대응).
+function computeRevisedUtapPcc(analysislogRaw: string | null, speechlogRaw: string | null): number | null {
+  if (!analysislogRaw) return null
+  let mispronByWord = new Map<string, MispronEntry>()
+  try {
+    const log = JSON.parse(analysislogRaw) as { mispronunciations?: MispronEntry[] }
+    mispronByWord = new Map((log.mispronunciations ?? []).map(m => [m.word, m]))
+  } catch { return null }
+
+  const testedWords = new Set(speechInfoMap(speechlogRaw).keys())
+
+  let total = 0, correct = 0
+  for (const [word, target] of Object.entries(HIDONGDONG_TARGET_CONSONANT)) {
+    if (!testedWords.has(word)) continue
+    total++
+    const m = mispronByWord.get(word)
+    const isError = (m?.e_list ?? []).some(e => {
+      if (errJoum(e) !== target) return false
+      const ctgr = errCtgr(e)
+      return ctgr !== 'DISTORTION' && ctgr !== 'DISTORT'
+    })
+    if (!isError) correct++
+  }
+  if (total === 0) return null
+  return (correct / total) * 100 // 소수점은 호출부에서 toFixed — 여기서 반올림하면 정밀도 손실
+}
+
+// 1차 mispronunciations(오답) × 2차 mispronunciations/speechlog 를 단어 기준으로 조인해
+// "자극반응도" 표 행을 만든다. 정확도는 speechlog.wrdAc(표준발음과의 일치도, 0~1) 그대로 사용.
+// **2차에 재시도한 기록 자체가 없는 단어는 표에서 제외**(재검사 안 한 단어를 "자극반응도"로
+// 보여주는 건 의미가 없어서).
+function buildStimulability(
+  firstLog: string | null, firstSpeech: string | null,
+  secondLog: string | null, secondSpeech: string | null
+): StimulusRow[] {
+  if (!firstLog) return []
+  let firstMisprons: MispronEntry[] = []
+  try {
+    const log = JSON.parse(firstLog) as { mispronunciations?: MispronEntry[] }
+    firstMisprons = log.mispronunciations ?? []
+  } catch { return [] }
+  if (firstMisprons.length === 0) return []
+
+  const firstInfoByWord = speechInfoMap(firstSpeech)
+  const secondInfoByWord = speechInfoMap(secondSpeech)
+
+  let secondMispronByWord = new Map<string, string>()
+  if (secondLog) {
+    try {
+      const log2 = JSON.parse(secondLog) as { mispronunciations?: MispronEntry[] }
+      secondMispronByWord = new Map((log2.mispronunciations ?? []).map(m => [m.word, m.ch_pron]))
+    } catch { /* 무시 */ }
+  }
+
+  return firstMisprons
+    .filter(m => secondInfoByWord.has(m.word)) // 2차 재시도 기록이 있는 단어만
+    .map(m => {
+      const errorTypes = new Set<string>()
+      for (const e of m.e_list ?? []) {
+        const ctgr = errCtgr(e)
+        if (ctgr) errorTypes.add(E_CTGR_LABEL[ctgr] ?? ctgr)
+      }
+      const firstInfo = firstInfoByWord.get(m.word)
+      const secondInfo = secondInfoByWord.get(m.word)!
+      // 2차 mispronunciations 에 없으면 정답 처리된 것 → speechlog 의 정답 발음 표기.
+      const second = secondMispronByWord.get(m.word) ?? secondInfo.pron
+      return {
+        target: m.word,
+        first: m.ch_pron,
+        firstError: [...errorTypes].join(', '),
+        firstAccuracy: firstInfo ? Math.round(firstInfo.acc * 100) : null,
+        second,
+        secondAccuracy: Math.round(secondInfo.acc * 100),
+      }
+    })
 }
 
 function parseAnalysislogDetail(raw: string | null): DiagDetail {
@@ -450,6 +563,7 @@ function parseAnalysislogDetail(raw: string | null): DiagDetail {
         const joum = errJoum(e)
         const posLabel = (e.pos && POS_LABEL[e.pos]) ? POS_LABEL[e.pos] : (e.pos || null)
         if (!joum || !posLabel) continue
+        if (posLabel.endsWith('중성')) continue // 모음(중성) 제외 — 오류 음소 및 위치는 자음만
         if (!phonemeMap.has(joum)) phonemeMap.set(joum, { types: new Set(), positions: new Set(), count: 0 })
         const entry = phonemeMap.get(joum)!
         entry.count++   // 음소 등장 횟수 (레퍼런스: cnt>1 일 때 "/ㄱ/ (3)" 표기)
@@ -3965,7 +4079,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            c.idx                                AS child_id,
            c.id                                 AS identifier,
            to_char(r.act_date, 'YYYY.MM.DD HH24:MI') AS examined_at,
-           r.analysislog
+           r.analysislog, r.speechlog, r.round, r.act_type
          FROM tb_childact_report r
          JOIN tb_member c ON c.id = r.id AND c.mtype = 'child' AND c.delete_yn = 'N'
          WHERE r.idx = ? AND c.instt_code = ?
@@ -3973,9 +4087,46 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         [did, user.instt_code]
       )
       if (!rows[0]) return err(404, 'not found')
-      const row = rows[0] as { id: number; child_id: number; identifier: string; examined_at: string; analysislog: string | null }
+      const row = rows[0] as {
+        id: number; child_id: number; identifier: string; examined_at: string
+        analysislog: string | null; speechlog: string | null; round: number | null; act_type: string | null
+      }
       const detail = parseAnalysislogDetail(row.analysislog)
-      return json({ id: row.id, child_id: row.child_id, identifier: row.identifier, examined_at: row.examined_at, ...detail })
+
+      // revised_statistics 에 개정 자음정확도(UTAP_PCC)가 없으면(실데이터엔 항상 없음)
+      // HIDONGDONG_TARGET_CONSONANT 기준으로 직접 계산해 채운다.
+      if (!detail.revised_statistics.some(r => r[0] === STTS_REVISED_LABEL.UTAP_PCC)) {
+        const revisedPcc = computeRevisedUtapPcc(row.analysislog, row.speechlog)
+        if (revisedPcc != null) {
+          detail.revised_statistics = [
+            [STTS_REVISED_LABEL.UTAP_PCC, revisedPcc.toFixed(2), '-', '-'],
+            ...detail.revised_statistics
+          ]
+        }
+      }
+
+      // round 로 1차/2차 짝을 찾아 자극반응도(stimulability) 를 조합한다.
+      let stimulability: StimulusRow[] = []
+      if (row.round != null && row.round !== -1 && row.act_type === 'hidongdong') {
+        if (row.round === row.id) {
+          const [pairRows] = await conn.query<RowDataPacket[]>(
+            `SELECT analysislog, speechlog FROM tb_childact_report
+             WHERE round = ? AND idx != ? AND act_type = 'hidongdong' ORDER BY idx LIMIT 1`,
+            [row.id, row.id]
+          )
+          const second = pairRows[0] as { analysislog: string | null; speechlog: string | null } | undefined
+          stimulability = buildStimulability(row.analysislog, row.speechlog, second?.analysislog ?? null, second?.speechlog ?? null)
+        } else {
+          const [pairRows] = await conn.query<RowDataPacket[]>(
+            `SELECT analysislog, speechlog FROM tb_childact_report WHERE idx = ? LIMIT 1`,
+            [row.round]
+          )
+          const first = pairRows[0] as { analysislog: string | null; speechlog: string | null } | undefined
+          stimulability = buildStimulability(first?.analysislog ?? null, first?.speechlog ?? null, row.analysislog, row.speechlog)
+        }
+      }
+
+      return json({ id: row.id, child_id: row.child_id, identifier: row.identifier, examined_at: row.examined_at, ...detail, stimulability })
     }
 
     // GET /api/staff?type=doctor|therapist  — 같은 기관 스태프 목록
