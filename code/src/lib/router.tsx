@@ -151,6 +151,7 @@ export function RouterProvider({ children }: { children: ReactNode }) {
   const go = (next: Route) => {
     setRoute(next)
     window.location.hash = toHash(next)
+    window.scrollTo(0, 0)
   }
 
   return <RouterContext.Provider value={{ route, go }}>{children}</RouterContext.Provider>

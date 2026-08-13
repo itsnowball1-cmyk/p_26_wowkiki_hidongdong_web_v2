@@ -1,4 +1,4 @@
-import { createConnection, type Connection, type RowDataPacket, type ResultSetHeader } from 'mysql2/promise'
+import { Pool, types as pgTypes } from 'pg'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -102,38 +102,99 @@ type StaffRow = RowDataPacket & {
   approval_status?: string | null
 }
 
-const TEXT_FIELD_TYPES = new Set(['VAR_STRING', 'STRING', 'BLOB', 'TINY_BLOB', 'MEDIUM_BLOB', 'LONG_BLOB'])
+// bigint(COUNT(*)/SUM 등)·numeric 컬럼을 pg 기본값(문자열)이 아니라 JS number 로 받기 위한 파서 재정의.
+pgTypes.setTypeParser(20, (v: string) => parseInt(v, 10))   // int8/bigint
+pgTypes.setTypeParser(1700, (v: string) => parseFloat(v))   // numeric/decimal
+
+export type RowDataPacket = Record<string, any>
+export type ResultSetHeader = { affectedRows: number; insertId: number }
+export type Connection = {
+  query<T = any>(sql: string, params?: any[]): Promise<[T, undefined]>
+  end(): Promise<void>
+}
+
+let _pool: Pool | null = null
+function getPool(env: Env): Pool {
+  if (!_pool) {
+    _pool = new Pool({
+      host: env.DB_HOST,
+      port: Number(env.DB_PORT),
+      user: env.DB_USER,
+      password: env.DB_PASSWORD,
+      database: env.DB_DATABASE,
+    })
+  }
+  return _pool
+}
+
+const WRITE_COMMANDS = new Set(['INSERT', 'UPDATE', 'DELETE'])
+
+// mysql2 는 '?' 위치 플레이스홀더를 쓰지만 pg 는 '$1,$2,...' 를 요구한다.
+// 문자열 리터럴( '...' ) 안의 '?' 는 건드리지 않고 바깥의 '?' 만 순서대로 치환.
+function toPgSql(sql: string, params: any[]): { text: string; values: any[] } {
+  let n = 0
+  let inString = false
+  let out = ''
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]
+    if (ch === "'") inString = !inString
+    if (ch === '?' && !inString) {
+      n += 1
+      out += '$' + n
+    } else {
+      out += ch
+    }
+  }
+  return { text: out, values: params }
+}
+
+function mysqlDateString(d: Date): string {
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+}
+
+// opts.dateStrings=true 인 레거시(Unity 클라이언트) 엔드포인트 호환:
+// 기존 mysql2 dateStrings 옵션처럼 Date 컬럼을 'YYYY-MM-DD HH:MM:SS' 문자열로 변환해 돌려준다.
+function applyDateStrings(rows: unknown): unknown {
+  if (!Array.isArray(rows)) return rows
+  for (const row of rows) {
+    if (row && typeof row === 'object') {
+      for (const k of Object.keys(row as Record<string, unknown>)) {
+        const v = (row as Record<string, unknown>)[k]
+        if (v instanceof Date) (row as Record<string, unknown>)[k] = mysqlDateString(v)
+      }
+    }
+  }
+  return rows
+}
 
 async function getConn(env: Env, opts: { dateStrings?: boolean } = {}): Promise<Connection> {
-  return createConnection({
-    host: env.DB_HOST,
-    port: Number(env.DB_PORT),
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: env.DB_DATABASE,
-    charset: 'utf8mb4',
-    disableEval: true,
-    timezone: '+00:00',
-    // 레거시(Unity 클라이언트) 엔드포인트는 PHP/mysqli 와 동일하게 날짜를 문자열로 반환해야
-    // 클라이언트가 birth_date/regist_date 등을 그대로 파싱할 수 있다.
-    dateStrings: opts.dateStrings === true,
-    // mysql2 in Cloudflare Workers decodes text bytes as Latin-1; force UTF-8.
-    // Buffer polyfill is not a true Uint8Array so we must Array.from() first.
-    typeCast(field, next) {
-      if (TEXT_FIELD_TYPES.has(field.type) && (field as { charsetNr?: number }).charsetNr !== 63) {
-        const buf = field.buffer()
-        if (buf == null) return null
-        return new TextDecoder('utf-8').decode(new Uint8Array(Array.from(buf) as number[]))
+  const client = await getPool(env).connect()
+  return {
+    async query<T = any>(sql: string, params: any[] = []): Promise<[T, undefined]> {
+      const { text, values } = toPgSql(sql, params)
+      const result = await client.query(text, values)
+      const command = (result.command || '').toUpperCase()
+      if (WRITE_COMMANDS.has(command)) {
+        const first = result.rows?.[0] as Record<string, any> | undefined
+        const header: ResultSetHeader = {
+          affectedRows: result.rowCount ?? 0,
+          insertId: (first?.idx ?? first?.id ?? 0) as number,
+        }
+        return [header as unknown as T, undefined]
       }
-      return next()
-    }
-  })
+      const rows = opts.dateStrings ? applyDateStrings(result.rows) : result.rows
+      return [rows as unknown as T, undefined]
+    },
+    async end() {
+      client.release()
+    },
+  }
 }
 
 async function withConn<T>(env: Env, fn: (conn: Connection) => Promise<T>, opts: { dateStrings?: boolean } = {}): Promise<T> {
   const conn = await getConn(env, opts)
   try {
-    await conn.query("SET NAMES 'utf8mb4'")
     return await fn(conn)
   } finally {
     await conn.end()
@@ -144,14 +205,54 @@ let _migrationDone = false
 async function ensureMigrations(conn: Connection) {
   if (_migrationDone) return
   const [rows] = await conn.query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tb_schedule' AND COLUMN_NAME = 'repeat_group_id'`
+    `SELECT COUNT(*) AS cnt FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = 'tb_schedule' AND column_name = 'repeat_group_id'`
   )
-  if ((rows[0] as { cnt: number }).cnt === 0) {
+  if (Number((rows[0] as { cnt: number }).cnt) === 0) {
     await conn.query(`ALTER TABLE tb_schedule ADD COLUMN repeat_group_id VARCHAR(36) NULL DEFAULT NULL`)
-    await conn.query(`ALTER TABLE tb_schedule ADD INDEX idx_repeat_group (repeat_group_id)`)
+    await conn.query(`CREATE INDEX IF NOT EXISTS idx_repeat_group ON tb_schedule (repeat_group_id)`)
   }
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS tb_child_folder (
+      idx SERIAL PRIMARY KEY,
+      owner_code VARCHAR(45) NOT NULL,
+      instt_code VARCHAR(45) NOT NULL,
+      folder_name VARCHAR(10) NOT NULL,
+      regist_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      update_date TIMESTAMP
+    )`)
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS tb_child_folder_member (
+      idx SERIAL PRIMARY KEY,
+      folder_idx INT NOT NULL REFERENCES tb_child_folder(idx) ON DELETE CASCADE,
+      child_idx INT NOT NULL
+    )`)
+  await conn.query(`CREATE INDEX IF NOT EXISTS idx_child_folder_owner ON tb_child_folder (owner_code)`)
+  await conn.query(`CREATE INDEX IF NOT EXISTS idx_child_folder_member_folder ON tb_child_folder_member (folder_idx)`)
   _migrationDone = true
+}
+
+// MySQL 의 `SHOW COLUMNS FROM table` 결과와 같은 모양을 information_schema.columns 로 재현.
+// (관리자 게시판 CRUD 가 컬럼 존재 여부를 보고 동적으로 INSERT 를 구성하는 데 사용)
+type ColInfo = { Field: string; Null: string; Default: string | null; Extra: string; Type: string }
+async function showColumns(conn: Connection, table: string): Promise<ColInfo[]> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT column_name, is_nullable, column_default, data_type, is_identity
+     FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = ?
+     ORDER BY ordinal_position`,
+    [table]
+  )
+  return (rows as RowDataPacket[]).map(r => ({
+    // pgloader 이관 시 컬럼명을 소문자로 낮췄지만(downcase identifiers), 게시판 CRUD 코드는
+    // MySQL SHOW COLUMNS 가 돌려주던 원래 대문자(BOARD_ID 등)와 비교하므로 다시 대문자로.
+    Field: (r.column_name as string).toUpperCase(),
+    Null: r.is_nullable as string,
+    Default: r.column_default as string | null,
+    Extra: (r.is_identity === 'YES' || (typeof r.column_default === 'string' && r.column_default.startsWith('nextval')))
+      ? 'auto_increment' : '',
+    Type: r.data_type as string,
+  }))
 }
 
 // ─── analysislog 파싱 헬퍼 ───────────────────────────────────────────────────
@@ -266,8 +367,20 @@ const E_CTGR_LABEL: Record<string, string> = {
   DISTORTION: '왜곡', DISTORT: '왜곡'
 }
 
+// "하이동동" 종합진단(act_type='hidongdong') 35개 검사어의 단어별 공식 목표 자음.
+// UTAP_PCC(자음정확도) 계산 기준 — hj9999/whale1 실데이터로 검증 완료(정확히 일치).
+const HIDONGDONG_TARGET_CONSONANT: Record<string, string> = {
+  '곰': 'ㅁ', '과자': 'ㅈ', '구급차': 'ㅂ', '국자': 'ㄱ', '귀': 'ㄱ', '까치': 'ㄲ',
+  '냄비': 'ㄴ', '눈썹': 'ㅆ', '다리': 'ㄷ', '돼지': 'ㅈ', '딸기': 'ㄹ', '레몬': 'ㅁ',
+  '마이크': 'ㅁ', '바나나': 'ㅂ', '버섯': 'ㄷ', '빵': 'ㅇ', '사탕': 'ㅅ', '수박': 'ㄱ',
+  '찌개': 'ㅉ', '씨앗': 'ㅆ', '아빠': 'ㅃ', '야구': 'ㄱ', '여우': 'ㅇ', '연필': 'ㄹ',
+  '오뚜기': 'ㄸ', '요거트': 'ㅌ', '우유': 'ㅇ', '원숭이': 'ㅅ', '의자': 'ㅈ', '자동차': 'ㅊ',
+  '책상': 'ㅊ', '코끼리': 'ㅋ', '타조': 'ㅌ', '펭귄': 'ㅍ', '하마': 'ㅎ'
+}
+
+// prcntl 은 실데이터에서 항상 0(미계산 placeholder) — "수준" 컬럼의 lv=0→'-' 과 동일하게 처리.
 function prcntlLabel(p: number): string {
-  return p <= 0 ? '1%ile 이하' : `${Math.round(p)}%ile`
+  return p <= 0 ? '-' : `${Math.round(p)}%ile`
 }
 
 function lvLabel(lv: number): string {
@@ -307,6 +420,107 @@ type DiagDetail = {
   error_position: { phoneme: string; count: number; types: string; positions: string }[]
   error_rank: { rank: number; type: string; ratio: string }[]
   stimulability: unknown[]
+}
+
+type StimulusRow = {
+  target: string
+  first: string
+  firstError: string
+  firstAccuracy: number | null
+  second: string | null
+  secondAccuracy: number | null
+}
+
+// speechlog.logLst[] 에서 단어(wrd) → { 정확도(wrdAc, 0~1 = 표준발음과의 일치도), 정답 발음(pron) } 맵.
+function speechInfoMap(raw: string | null): Map<string, { acc: number; pron: string }> {
+  const map = new Map<string, { acc: number; pron: string }>()
+  if (!raw) return map
+  try {
+    const log = JSON.parse(raw) as { logLst?: Array<{ wrd?: string; wrdAc?: number; pron?: string }> }
+    for (const item of log.logLst ?? []) {
+      if (item.wrd != null && item.wrdAc != null) map.set(item.wrd, { acc: item.wrdAc, pron: item.pron ?? item.wrd })
+    }
+  } catch { /* 무시 */ }
+  return map
+}
+
+// 개정 자음정확도(PCC-R) — HIDONGDONG_TARGET_CONSONANT 의 단어별 목표 자음 기준으로,
+// 그 자음이 대치/생략(CHANGE/OMIT)이면 오류, 왜곡(DISTORTION)이면 정확 처리(=PCC와의 차이).
+// 목표 자음이 실제로 이 진단에서 검사됐는지는 speechlog 로 확인(짧은/커스텀 진단 대응).
+function computeRevisedUtapPcc(analysislogRaw: string | null, speechlogRaw: string | null): number | null {
+  if (!analysislogRaw) return null
+  let mispronByWord = new Map<string, MispronEntry>()
+  try {
+    const log = JSON.parse(analysislogRaw) as { mispronunciations?: MispronEntry[] }
+    mispronByWord = new Map((log.mispronunciations ?? []).map(m => [m.word, m]))
+  } catch { return null }
+
+  const testedWords = new Set(speechInfoMap(speechlogRaw).keys())
+
+  let total = 0, correct = 0
+  for (const [word, target] of Object.entries(HIDONGDONG_TARGET_CONSONANT)) {
+    if (!testedWords.has(word)) continue
+    total++
+    const m = mispronByWord.get(word)
+    const isError = (m?.e_list ?? []).some(e => {
+      if (errJoum(e) !== target) return false
+      const ctgr = errCtgr(e)
+      return ctgr !== 'DISTORTION' && ctgr !== 'DISTORT'
+    })
+    if (!isError) correct++
+  }
+  if (total === 0) return null
+  return (correct / total) * 100 // 소수점은 호출부에서 toFixed — 여기서 반올림하면 정밀도 손실
+}
+
+// 1차 mispronunciations(오답) × 2차 mispronunciations/speechlog 를 단어 기준으로 조인해
+// "자극반응도" 표 행을 만든다. 정확도는 speechlog.wrdAc(표준발음과의 일치도, 0~1) 그대로 사용.
+// **2차에 재시도한 기록 자체가 없는 단어는 표에서 제외**(재검사 안 한 단어를 "자극반응도"로
+// 보여주는 건 의미가 없어서).
+function buildStimulability(
+  firstLog: string | null, firstSpeech: string | null,
+  secondLog: string | null, secondSpeech: string | null
+): StimulusRow[] {
+  if (!firstLog) return []
+  let firstMisprons: MispronEntry[] = []
+  try {
+    const log = JSON.parse(firstLog) as { mispronunciations?: MispronEntry[] }
+    firstMisprons = log.mispronunciations ?? []
+  } catch { return [] }
+  if (firstMisprons.length === 0) return []
+
+  const firstInfoByWord = speechInfoMap(firstSpeech)
+  const secondInfoByWord = speechInfoMap(secondSpeech)
+
+  let secondMispronByWord = new Map<string, string>()
+  if (secondLog) {
+    try {
+      const log2 = JSON.parse(secondLog) as { mispronunciations?: MispronEntry[] }
+      secondMispronByWord = new Map((log2.mispronunciations ?? []).map(m => [m.word, m.ch_pron]))
+    } catch { /* 무시 */ }
+  }
+
+  return firstMisprons
+    .filter(m => secondInfoByWord.has(m.word)) // 2차 재시도 기록이 있는 단어만
+    .map(m => {
+      const errorTypes = new Set<string>()
+      for (const e of m.e_list ?? []) {
+        const ctgr = errCtgr(e)
+        if (ctgr) errorTypes.add(E_CTGR_LABEL[ctgr] ?? ctgr)
+      }
+      const firstInfo = firstInfoByWord.get(m.word)
+      const secondInfo = secondInfoByWord.get(m.word)!
+      // 2차 mispronunciations 에 없으면 정답 처리된 것 → speechlog 의 정답 발음 표기.
+      const second = secondMispronByWord.get(m.word) ?? secondInfo.pron
+      return {
+        target: m.word,
+        first: m.ch_pron,
+        firstError: [...errorTypes].join(', '),
+        firstAccuracy: firstInfo ? Math.round(firstInfo.acc * 100) : null,
+        second,
+        secondAccuracy: Math.round(secondInfo.acc * 100),
+      }
+    })
 }
 
 function parseAnalysislogDetail(raw: string | null): DiagDetail {
@@ -349,6 +563,7 @@ function parseAnalysislogDetail(raw: string | null): DiagDetail {
         const joum = errJoum(e)
         const posLabel = (e.pos && POS_LABEL[e.pos]) ? POS_LABEL[e.pos] : (e.pos || null)
         if (!joum || !posLabel) continue
+        if (posLabel.endsWith('중성')) continue // 모음(중성) 제외 — 오류 음소 및 위치는 자음만
         if (!phonemeMap.has(joum)) phonemeMap.set(joum, { types: new Set(), positions: new Set(), count: 0 })
         const entry = phonemeMap.get(joum)!
         entry.count++   // 음소 등장 횟수 (레퍼런스: cnt>1 일 때 "/ㄱ/ (3)" 표기)
@@ -605,6 +820,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
   const method = request.method
 
   try {
+    await ensureMigrations(conn)
+
     // ── 인증 불필요 ──────────────────────────────────────────────────────────
 
     if (path === '/api/auth/login' && method === 'POST') return handleLogin(request, conn)
@@ -655,7 +872,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const approvalStatus = null  // 임시: 치료사 자동 승인 (배포 전 테스트용)
       const [insertResult] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, depart_code, approval_status, license_file_nm, delete_yn, regist_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', NOW()) RETURNING idx`,
         [id, pw, code, mtype, name, phone ?? null, email ?? null, instt_code, depart_code ?? null, approvalStatus, license_file_nm ?? null]
       )
       if (license_file_nm && license_file_data) {
@@ -737,7 +954,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       // 관리자 계정 생성 — 와우키키 관리자 승인 후 로그인 가능
       const [insertResult] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_member (id, pw, code, mtype, name, phone, email, instt_code, approval_status, license_file_nm, delete_yn, regist_date)
-         VALUES (?, ?, ?, 'iadmin', ?, ?, ?, ?, '승인대기', ?, 'N', NOW())`,
+         VALUES (?, ?, ?, 'iadmin', ?, ?, ?, ?, '승인대기', ?, 'N', NOW()) RETURNING idx`,
         [id, pw, code, name, phone ?? null, email ?? null, instt_code, businessRegCertNm ?? null]
       )
 
@@ -1050,7 +1267,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         if (exist[0]) return legacyMsg(false, -18)
         const [r] = await conn.query<ResultSetHeader>(
           `INSERT INTO tb_member (id,pw,mtype,name,is_male_yn,birth_date,parent_name,parent_phone,relation,attribution,instt_code,doctor_code,teacher_code,admin_memo,doctor_memo,teacher_memo,status_yn,regist_date)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Y',NOW())`,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Y',NOW()) RETURNING idx`,
           [id, pw, mtype, name, is_male_yn, birth_date, parent_name, parent_phone, relation,
            f('attribution'), f('instt_code'), f('doctor_code'), f('teacher_code'), f('admin_memo'), f('doctor_memo'), f('teacher_memo')])
         if (r.insertId) return legacyMap(true, 0, { insert_id: r.insertId })
@@ -1063,7 +1280,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         if (instt_code === '' || mtype === '') return legacyMsg(false, -10)
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT idx,id,mtype,instt_code,code,name,is_male_yn,birth_date,status_yn,regist_date
-           FROM tb_member WHERE instt_code = ? AND mtype = ? AND IFNULL(delete_yn,'N')='N' ORDER BY name ASC, idx ASC`,
+           FROM tb_member WHERE instt_code = ? AND mtype = ? AND COALESCE(delete_yn,'N')='N' ORDER BY name ASC, idx ASC`,
           [instt_code, mtype])
         return legacyMap(true, 0, { list: rows })
       }
@@ -1074,7 +1291,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         if (name === '') return legacyMsg(false, -10)
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT idx,code,id,mtype,name,is_male_yn,birth_date,parent_name,parent_phone,relation,attribution,instt_code,doctor_code,teacher_code,admin_memo,doctor_memo,teacher_memo,status_yn,regist_date
-           FROM tb_member WHERE name = ? AND mtype = 'child' AND IFNULL(delete_yn,'N')='N' ORDER BY name ASC, idx ASC`,
+           FROM tb_member WHERE name = ? AND mtype = 'child' AND COALESCE(delete_yn,'N')='N' ORDER BY name ASC, idx ASC`,
           [name])
         return legacyMap(true, rows.length ? 0 : -98, { list: rows })
       }
@@ -1110,7 +1327,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         if (idx === -1 || isNaN(idx)) {
           const [r] = await conn.query<ResultSetHeader>(
             `INSERT INTO tb_childact_report (id,age,instt_code,doctor_code,teacher_code,use_type,act_type,act_date,last_qz_nth,done_yn,analysislog,speechlog)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, cols)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING idx`, cols)
           return legacyMap(r.affectedRows > 0, r.affectedRows > 0 ? 0 : -1, { idx: r.insertId, affected_rows: r.affectedRows })
         }
         const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_childact_report WHERE idx = ? LIMIT 1`, [idx])
@@ -1155,7 +1372,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         }
         const [r] = await conn.query<ResultSetHeader>(
           `INSERT INTO tb_trainingset (child_id,aim_joum,pos,coreword,tr_words,rsrvd_date,suit_age,growth_grade,is_ojoum_del_yn,is_only_noun_yn,is_cvcword_del_yn,min_len,max_len,can_read_yn,orderby_evowels_yn,orderby_ewords_yn)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING idx`, v)
         if (r.insertId) return legacyMap(true, 0, { idx: r.insertId })
         return legacyMap(false, -1, { idx: -1 })
       }
@@ -1178,7 +1395,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         const sftIdx = (folderRows[0] as { sft_idx: number } | undefined)?.sft_idx ?? null
 
         const [listResult] = await conn.query<ResultSetHeader>(
-          `INSERT INTO tb_data_list (serCode, sft_idx, data_title, cate_code, stfName) VALUES ('HIDONGDONG', ?, ?, ?, ?)`,
+          `INSERT INTO tb_data_list (serCode, sft_idx, data_title, cate_code, stfName) VALUES ('HIDONGDONG', ?, ?, ?, ?) RETURNING data_idx AS idx`,
           [sftIdx, title, cateCode, safeFolder])
         const dataIdx = listResult.insertId
 
@@ -1215,8 +1432,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         if (!svc[0]) return legacyMsg(false, -10006)
         if ((svc[0] as { serRegiState?: string }).serRegiState === '02') return legacyMsg(false, -10007)
         const [rows] = await conn.query<RowDataPacket[]>(
-          `SELECT IFNULL(A.file_nm,'') AS file_nm, IFNULL(A.file_size,'') AS file_size, IFNULL(A.source_file_nm,'') AS source_file_nm,
-                  CONCAT('https://api.wowkiki.kr/dataCenter', IFNULL(A.file_nm,'')) AS file_url
+          `SELECT COALESCE(A.file_nm,'') AS file_nm, COALESCE(A.file_size,'') AS file_size, COALESCE(A.source_file_nm,'') AS source_file_nm,
+                  CONCAT('https://api.wowkiki.kr/dataCenter', COALESCE(A.file_nm,'')) AS file_url
            FROM tb_data_file A INNER JOIN tb_data_list B ON B.data_idx = A.data_idx
            WHERE B.stfName = ? AND B.serCode = ?`, [FOLDER_NAME, serCode])
         if (rows[0]) return legacyMap(true, 0, { file_list: rows })
@@ -1236,8 +1453,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
         let squery = ''
         const searchParam: unknown[] = []
-        if (search_jogun === 'name' && keyword !== '') { squery = ` AND A.name like CONCAT("%", ?, "%")`; searchParam.push(keyword) }
-        else if (search_jogun === 'act_date' && keyword !== '') { squery = ` AND A.act_date like CONCAT("%", ?, "%")`; searchParam.push(keyword) }
+        if (search_jogun === 'name' && keyword !== '') { squery = ` AND A.name like CONCAT('%', ?, '%')`; searchParam.push(keyword) }
+        else if (search_jogun === 'act_date' && keyword !== '') { squery = ` AND A.act_date like CONCAT('%', ?, '%')`; searchParam.push(keyword) }
 
         const [cntRows] = await conn.query<RowDataPacket[]>(
           `SELECT COUNT(*) AS totcnt FROM tb_childact_report A WHERE A.id = ? AND A.use_type = ?${squery}`,
@@ -1246,10 +1463,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
         const start = (page - 1) * size
         const [rows] = await conn.query<RowDataPacket[]>(
-          `SELECT A.idx, A.id, A.age, A.instt_code, IFNULL(A.doctor_code,'') AS doctor_code, IFNULL(A.teacher_code,'') AS teacher_code,
+          `SELECT A.idx, A.id, A.age, A.instt_code, COALESCE(A.doctor_code,'') AS doctor_code, COALESCE(A.teacher_code,'') AS teacher_code,
                   A.use_type, A.act_type, A.last_qz_nth, A.done_yn, A.analysislog, A.speechlog, A.act_date
-           FROM tb_childact_report A WHERE A.id = ? AND A.use_type = ?${squery} ORDER BY A.act_date DESC LIMIT ?, ?`,
-          [child_id, actlog_usetype, ...searchParam, start, size])
+           FROM tb_childact_report A WHERE A.id = ? AND A.use_type = ?${squery} ORDER BY A.act_date DESC LIMIT ? OFFSET ?`,
+          [child_id, actlog_usetype, ...searchParam, size, start])
 
         const speechlog_list: unknown[] = [], statistic_list: unknown[] = [], smmr_list: unknown[] = []
         const mispron_list: unknown[] = [], ojoum_list: unknown[] = []
@@ -1277,7 +1494,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         const actlog_idx = trimStr(b.actlog_idx)
         if (actlog_idx === '') return legacyMsg(false, -10)
         const [rows] = await conn.query<RowDataPacket[]>(
-          `SELECT A.idx, A.id, A.age, A.instt_code, IFNULL(A.doctor_code,'') AS doctor_code, IFNULL(A.teacher_code,'') AS teacher_code,
+          `SELECT A.idx, A.id, A.age, A.instt_code, COALESCE(A.doctor_code,'') AS doctor_code, COALESCE(A.teacher_code,'') AS teacher_code,
                   A.use_type, A.act_type, A.act_date, A.last_qz_nth, A.done_yn, A.analysislog, A.speechlog
            FROM tb_childact_report A WHERE A.idx = ?`, [actlog_idx])
         let speechlog_list: unknown = [], summary: unknown = [], statistic_list: unknown[] = []
@@ -1361,7 +1578,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         const params = role ? [`${role}_%`] : []
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT idx, term_type, title, required, version, content, change_summary,
-                  DATE_FORMAT(created_at, '%Y.%m.%d') AS created_date
+                  to_char(created_at, 'YYYY.MM.DD') AS created_date
            FROM tb_terms WHERE ${whereClause} ORDER BY created_at ASC`,
           params
         )
@@ -1418,7 +1635,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         ) as [RowDataPacket[], unknown]
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT idx, term_type, title, version, change_summary, is_active,
-                  DATE_FORMAT(created_at, '%Y.%m.%d %H:%i') AS created_at
+                  to_char(created_at, 'YYYY.MM.DD HH24:MI') AS created_at
            FROM tb_terms WHERE ${where}
            ORDER BY created_at DESC LIMIT ? OFFSET ?`,
           [...params, limit, (page - 1) * limit]
@@ -1742,8 +1959,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
                 COALESCE(i.name, m.instt_code) AS instt_name,
                 d.name AS doctor_name,
                 t.name AS therapist_name,
-                (SELECT DATE_FORMAT(MIN(start_date), '%Y.%m.%d') FROM tb_schedule WHERE child_id = m.id AND schedule_type = '1' AND start_date > NOW()) AS next_doctor_appt,
-                (SELECT DATE_FORMAT(MIN(start_date), '%Y.%m.%d') FROM tb_schedule WHERE child_id = m.id AND schedule_type = '2' AND start_date > NOW()) AS next_therapy_appt
+                (SELECT to_char(MIN(start_date), 'YYYY.MM.DD') FROM tb_schedule WHERE child_id = m.id AND schedule_type = '1' AND start_date > NOW()) AS next_doctor_appt,
+                (SELECT to_char(MIN(start_date), 'YYYY.MM.DD') FROM tb_schedule WHERE child_id = m.id AND schedule_type = '2' AND start_date > NOW()) AS next_therapy_appt
          FROM tb_member m
          LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
          LEFT JOIN tb_member d ON d.code = m.doctor_code AND d.mtype = 'doctor'
@@ -1760,7 +1977,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           name:              r.name,
           age_label:         ageLabel(r.birth_date) ?? '-',
           birth_date:        fmtDate(r.birth_date) ?? '-',
-          gender:            r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          gender:            r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : '-',
           instt_name:        r.instt_name ?? r.instt_code,
           doctor_name:       r.doctor_name ?? '-',
           therapist_name:    r.therapist_name ?? '-',
@@ -1795,11 +2012,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            t.code AS therapist_id,
            t.name AS therapist_name,
            t.depart_code AS therapist_department,
-           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+           (SELECT to_char(s.start_date, 'YYYY.MM.DD')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_doctor_appointment,
-           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+           (SELECT to_char(s.start_date, 'YYYY.MM.DD')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
@@ -1869,7 +2086,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       if (!mId) return err(404, 'not found')
       const [trows] = await conn.query<RowDataPacket[]>(
         `SELECT idx, act_date, analysislog,
-                JSON_LENGTH(JSON_EXTRACT(speechlog, '$.logLst')) AS speech_count
+                jsonb_array_length(speechlog->'logLst') AS speech_count
          FROM tb_childact_report
          WHERE id = ? AND use_type = 'training'
          ORDER BY act_date DESC, idx DESC`,
@@ -1990,7 +2207,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       if (!idx) return err(400, '필수 항목 누락')
       const [[member]] = await conn.query<RowDataPacket[]>(
         `SELECT idx, id, name, phone, email, instt_code, depart_code, license_file_nm, approval_status, admin_memo,
-                DATE_FORMAT(regist_date, '%Y.%m.%d %H:%i') AS regist_date
+                to_char(regist_date, 'YYYY.MM.DD HH24:MI') AS regist_date
          FROM tb_member WHERE idx = ? AND mtype = 'teacher' LIMIT 1`, [idx]
       ) as [RowDataPacket[], unknown]
       if (!member) return err(404, '치료사를 찾을 수 없습니다.')
@@ -2291,9 +2508,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const webMtypes = `'doctor','teacher','iadmin'`
       const q = (mtypes: string, extra: string) => conn.query<RowDataPacket[]>(
         `SELECT
-           SUM(regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
-           SUM(regist_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
-           SUM(DATE(regist_date) = CURDATE()) AS dau
+           SUM(regist_date >= date_trunc('month', NOW())) AS mau,
+           SUM(regist_date >= (NOW() - INTERVAL '7 day')) AS wau,
+           SUM((regist_date)::date = CURRENT_DATE) AS dau
          FROM tb_member WHERE mtype IN (${mtypes}) AND delete_yn='N' AND instt_code=? ${extra}`,
         [instt_code]
       )
@@ -2313,15 +2530,18 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const from   = url.searchParams.get('from') ?? new Date(Date.now() - 90 * 864e5).toISOString().slice(0,10)
       const to     = url.searchParams.get('to')   ?? new Date().toISOString().slice(0,10)
       const mtypes = type === 'app' ? `'child'` : `'doctor','teacher','iadmin'`
-      let groupExpr = `DATE(regist_date)`
-      let orderExpr = `DATE(regist_date) DESC`
-      if (metric === 'wau') { groupExpr = `YEARWEEK(regist_date, 1)`; orderExpr = `YEARWEEK(regist_date, 1) DESC` }
-      if (metric === 'mau') { groupExpr = `DATE_FORMAT(regist_date,'%Y-%m')`; orderExpr = `DATE_FORMAT(regist_date,'%Y-%m') DESC` }
+      let groupExpr = `(regist_date)::date`
+      let orderExpr = `(regist_date)::date DESC`
+      if (metric === 'wau') {
+        const yw = `(EXTRACT(ISOYEAR FROM regist_date)*100 + EXTRACT(WEEK FROM regist_date))`
+        groupExpr = yw; orderExpr = `${yw} DESC`
+      }
+      if (metric === 'mau') { groupExpr = `to_char(regist_date, 'YYYY-MM')`; orderExpr = `to_char(regist_date, 'YYYY-MM') DESC` }
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT ${groupExpr} AS period, COUNT(*) AS cnt
          FROM tb_member
          WHERE mtype IN (${mtypes}) AND delete_yn='N'
-           AND DATE(regist_date) BETWEEN ? AND ?
+           AND (regist_date)::date BETWEEN ? AND ?
          GROUP BY ${groupExpr}
          ORDER BY ${orderExpr}`,
         [from, to]
@@ -2341,22 +2561,22 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const webMtypes = `'doctor','teacher','iadmin'`
       const appMtype  = `'child'`
       const [[webMau]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= date_trunc('month', NOW())`
       ) as [RowDataPacket[], unknown]
       const [[webWau]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND regist_date >= (NOW() - INTERVAL '7 day')`
       ) as [RowDataPacket[], unknown]
       const [[webDau]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND DATE(regist_date) = CURDATE()`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype IN (${webMtypes}) AND delete_yn='N' AND (regist_date)::date = CURRENT_DATE`
       ) as [RowDataPacket[], unknown]
       const [[appMau]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND regist_date >= date_trunc('month', NOW())`
       ) as [RowDataPacket[], unknown]
       const [[appWau]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND regist_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND regist_date >= (NOW() - INTERVAL '7 day')`
       ) as [RowDataPacket[], unknown]
       const [[appDau]] = await conn.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND DATE(regist_date) = CURDATE()`
+        `SELECT COUNT(*) AS cnt FROM tb_member WHERE mtype=${appMtype} AND delete_yn='N' AND (regist_date)::date = CURRENT_DATE`
       ) as [RowDataPacket[], unknown]
       const [instRows] = await conn.query<RowDataPacket[]>(
         `SELECT MIN(m.idx) AS idx, m.instt_code, MIN(m.regist_date) AS regist_date,
@@ -2505,7 +2725,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT m.mtype, m.name, m.code, UPPER(m.instt_code) AS instt_code,
                 COALESCE(i.name, m.instt_code) AS instt_name,
-                DATE_FORMAT(m.regist_date, '%Y.%m.%d') AS regist_date,
+                to_char(m.regist_date, 'YYYY.MM.DD') AS regist_date,
                 m.birth_date, m.gender,
                 (SELECT d.name FROM tb_member d WHERE d.code = m.doctor_code AND d.mtype='doctor' LIMIT 1) AS doctor_name,
                 (SELECT t.name FROM tb_member t WHERE t.code = m.teacher_code AND t.mtype='teacher' LIMIT 1) AS therapist_name,
@@ -2568,14 +2788,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       try {
         const [[r]] = await conn.query<RowDataPacket[]>(
           `SELECT
-             SUM(login_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
-             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
-             SUM(DATE(login_date) = CURDATE()) AS dau,
-             SUM(login_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH),'%Y-%m-01')
-               AND login_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS prev_mau,
-             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-               AND login_date < DATE_SUB(NOW(), INTERVAL 7 DAY)) AS prev_wau,
-             SUM(DATE(login_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)) AS prev_dau
+             SUM(login_date >= date_trunc('month', NOW())) AS mau,
+             SUM(login_date >= (NOW() - INTERVAL '7 day')) AS wau,
+             SUM((login_date)::date = CURRENT_DATE) AS dau,
+             SUM(login_date >= date_trunc('month', NOW() - INTERVAL '1 month')
+               AND login_date < date_trunc('month', NOW())) AS prev_mau,
+             SUM(login_date >= (NOW() - INTERVAL '14 day')
+               AND login_date < (NOW() - INTERVAL '7 day')) AS prev_wau,
+             SUM((login_date)::date = (CURRENT_DATE - INTERVAL '1 day')) AS prev_dau
            FROM tb_login_log WHERE member_idx = ?`,
           [member_idx]
         ) as [RowDataPacket[], unknown]
@@ -2590,14 +2810,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       try {
         const [[c]] = await conn.query<RowDataPacket[]>(
           `SELECT
-             SUM(activity_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS monthly,
-             SUM(activity_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS weekly,
-             SUM(DATE(activity_date) = CURDATE()) AS daily,
-             SUM(activity_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH),'%Y-%m-01')
-               AND activity_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS prev_m,
-             SUM(activity_date >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-               AND activity_date < DATE_SUB(NOW(), INTERVAL 7 DAY)) AS prev_w,
-             SUM(DATE(activity_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)) AS prev_d
+             SUM(activity_date >= date_trunc('month', NOW())) AS monthly,
+             SUM(activity_date >= (NOW() - INTERVAL '7 day')) AS weekly,
+             SUM((activity_date)::date = CURRENT_DATE) AS daily,
+             SUM(activity_date >= date_trunc('month', NOW() - INTERVAL '1 month')
+               AND activity_date < date_trunc('month', NOW())) AS prev_m,
+             SUM(activity_date >= (NOW() - INTERVAL '14 day')
+               AND activity_date < (NOW() - INTERVAL '7 day')) AS prev_w,
+             SUM((activity_date)::date = (CURRENT_DATE - INTERVAL '1 day')) AS prev_d
            FROM tb_custom_log WHERE member_idx = ?`,
           [member_idx]
         ) as [RowDataPacket[], unknown]
@@ -2711,14 +2931,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       try {
         const [[r]] = await conn.query<RowDataPacket[]>(
           `SELECT
-             SUM(login_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS mau,
-             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
-             SUM(DATE(login_date) = CURDATE()) AS dau,
-             SUM(login_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH),'%Y-%m-01')
-               AND login_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS prev_mau,
-             SUM(login_date >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-               AND login_date < DATE_SUB(NOW(), INTERVAL 7 DAY)) AS prev_wau,
-             SUM(DATE(login_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)) AS prev_dau
+             SUM(login_date >= date_trunc('month', NOW())) AS mau,
+             SUM(login_date >= (NOW() - INTERVAL '7 day')) AS wau,
+             SUM((login_date)::date = CURRENT_DATE) AS dau,
+             SUM(login_date >= date_trunc('month', NOW() - INTERVAL '1 month')
+               AND login_date < date_trunc('month', NOW())) AS prev_mau,
+             SUM(login_date >= (NOW() - INTERVAL '14 day')
+               AND login_date < (NOW() - INTERVAL '7 day')) AS prev_wau,
+             SUM((login_date)::date = (CURRENT_DATE - INTERVAL '1 day')) AS prev_dau
            FROM tb_login_log WHERE member_idx = ?`,
           [member_idx]
         ) as [RowDataPacket[], unknown]
@@ -2942,17 +3162,17 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            (SELECT r.analysislog
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'training'
-              AND DATE(r.act_date) = CURDATE()
+              AND (r.act_date)::date = CURRENT_DATE
             ORDER BY r.idx DESC LIMIT 1)              AS today_log,
            (SELECT r.analysislog
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'training'
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS latest_log,
-           (SELECT DATEDIFF(CURDATE(), DATE(r.act_date))
+           (SELECT (CURRENT_DATE - (r.act_date)::date)
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'training'
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS days_since_trained,
-           (SELECT DATE(r.act_date)
+           (SELECT (r.act_date)::date
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.instt_code = c.instt_code AND r.use_type = 'diagnostic' AND r.analysislog IS NOT NULL
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diagnosis_date,
@@ -2976,7 +3196,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
       const [yesterdayRows] = await conn.query<RowDataPacket[]>(
         `SELECT DISTINCT id FROM tb_childact_report
-         WHERE use_type = 'training' AND DATE(act_date) = CURDATE() - INTERVAL 1 DAY
+         WHERE use_type = 'training' AND (act_date)::date = CURRENT_DATE - INTERVAL 1 DAY
            AND id IN (SELECT id FROM tb_member WHERE mtype='child' AND delete_yn='N' AND instt_code=? ${codeWhere.replace('c.doctor_code','doctor_code').replace('c.teacher_code','teacher_code')})`,
         [user.instt_code, ...codeArgs]
       )
@@ -3056,11 +3276,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            c.teacher_code,
            (SELECT name FROM tb_member WHERE code = c.doctor_code AND mtype = 'doctor' AND delete_yn = 'N' LIMIT 1) AS doctor_name,
            (SELECT name FROM tb_member WHERE code = c.teacher_code AND mtype = 'teacher' AND delete_yn = 'N' LIMIT 1) AS therapist_name,
-           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+           (SELECT to_char(s.start_date, 'YYYY.MM.DD')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_doctor_appointment,
-           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+           (SELECT to_char(s.start_date, 'YYYY.MM.DD')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
@@ -3085,7 +3305,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         child_name: r.child_name,
         birth_date: fmtDate(r.birth_date),
         age_label: ageLabel(r.birth_date),
-        gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : null,
+        gender: r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : null,
         app_login_id: r.identifier,
         doctor_code: r.doctor_code,
         teacher_code: r.teacher_code,
@@ -3168,7 +3388,6 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const body = (await request.json().catch(() => ({}))) as { ids?: number[] }
       const ids  = body.ids ?? []
       if (!ids.length) return json({ moved: 0 })
-
       const staffCode  = user.code || user.id
       const codeCol    = isDoctor ? 'doctor_code' : 'teacher_code'
       const [result] = await conn.query<ResultSetHeader>(
@@ -3181,6 +3400,73 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         [...ids, user.instt_code, staffCode]
       )
       return json({ moved: result.affectedRows })
+    }
+
+    // ── 아동 폴더(의사/치료사가 담당 아동을 임의로 묶는 그룹) ──────────────────
+    if (path === '/api/child-folders' && (method === 'GET' || method === 'POST')) {
+      if (user.mtype !== 'doctor' && user.mtype !== 'teacher') return err(403, '의사 또는 치료사만 사용할 수 있습니다.')
+      const staffCode = user.code || user.id
+
+      if (method === 'GET') {
+        const [rows] = await conn.query<RowDataPacket[]>(
+          `SELECT f.idx AS id, f.folder_name,
+                  COALESCE(array_agg(m.child_idx) FILTER (WHERE m.child_idx IS NOT NULL), '{}') AS child_ids
+           FROM tb_child_folder f
+           LEFT JOIN tb_child_folder_member m ON m.folder_idx = f.idx
+           WHERE f.owner_code = ?
+           GROUP BY f.idx
+           ORDER BY f.idx`,
+          [staffCode]
+        )
+        return json(rows)
+      }
+
+      // POST — 생성
+      const body = (await request.json().catch(() => ({}))) as { folder_name?: string; child_ids?: number[] }
+      const folderName = (body.folder_name ?? '').trim().slice(0, 10)
+      const childIds = (body.child_ids ?? []).filter((n) => Number.isInteger(n))
+      if (!folderName) return err(400, '폴더 이름을 입력해주세요.')
+
+      const [ins] = await conn.query<ResultSetHeader>(
+        `INSERT INTO tb_child_folder (owner_code, instt_code, folder_name) VALUES (?, ?, ?) RETURNING idx`,
+        [staffCode, user.instt_code, folderName]
+      )
+      const folderIdx = ins.insertId
+      for (const childId of childIds) {
+        await conn.query(`INSERT INTO tb_child_folder_member (folder_idx, child_idx) VALUES (?, ?)`, [folderIdx, childId])
+      }
+      return json({ id: folderIdx, folder_name: folderName, child_ids: childIds })
+    }
+
+    const folderItemMatch = path.match(/^\/api\/child-folders\/(\d+)$/)
+    if (folderItemMatch && (method === 'PUT' || method === 'DELETE')) {
+      if (user.mtype !== 'doctor' && user.mtype !== 'teacher') return err(403, '의사 또는 치료사만 사용할 수 있습니다.')
+      const staffCode = user.code || user.id
+      const folderIdx = Number(folderItemMatch[1])
+
+      const [ownRows] = await conn.query<RowDataPacket[]>(
+        `SELECT idx FROM tb_child_folder WHERE idx = ? AND owner_code = ? LIMIT 1`,
+        [folderIdx, staffCode]
+      )
+      if (!ownRows[0]) return err(404, '폴더를 찾을 수 없습니다.')
+
+      if (method === 'DELETE') {
+        await conn.query(`DELETE FROM tb_child_folder WHERE idx = ?`, [folderIdx])
+        return json({ ok: true })
+      }
+
+      // PUT — 이름/구성원 수정
+      const body = (await request.json().catch(() => ({}))) as { folder_name?: string; child_ids?: number[] }
+      const folderName = (body.folder_name ?? '').trim().slice(0, 10)
+      const childIds = (body.child_ids ?? []).filter((n) => Number.isInteger(n))
+      if (!folderName) return err(400, '폴더 이름을 입력해주세요.')
+
+      await conn.query(`UPDATE tb_child_folder SET folder_name = ?, update_date = NOW() WHERE idx = ?`, [folderName, folderIdx])
+      await conn.query(`DELETE FROM tb_child_folder_member WHERE folder_idx = ?`, [folderIdx])
+      for (const childId of childIds) {
+        await conn.query(`INSERT INTO tb_child_folder_member (folder_idx, child_idx) VALUES (?, ?)`, [folderIdx, childId])
+      }
+      return json({ id: folderIdx, folder_name: folderName, child_ids: childIds })
     }
 
     // GET /api/children/custom-list
@@ -3208,7 +3494,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.use_type = 'training'
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS latest_training_log,
-           (SELECT DATE_FORMAT(r.act_date, '%Y.%m.%d')
+           (SELECT to_char(r.act_date, 'YYYY.MM.DD')
             FROM tb_childact_report r
             WHERE r.id = c.id AND r.use_type = 'diagnostic'
             ORDER BY r.act_date DESC, r.idx DESC LIMIT 1) AS last_diagnosis
@@ -3231,7 +3517,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           name:           r.name ?? null,
           birth_date:     fmtDate(r.birth_date),
           age_label:      ageLabel(r.birth_date),
-          gender:         r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : null,
+          gender:         r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : null,
           therapist_name: r.therapist_name ?? null,
           current_sound:  p.summary,
           upcoming_sound: null,
@@ -3453,12 +3739,12 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       } : null
 
       const [schedRows] = await conn.query<RowDataPacket[]>(
-        `SELECT DAYOFWEEK(start_date) AS dow
+        `SELECT (EXTRACT(DOW FROM start_date)+1) AS dow
          FROM tb_schedule
          WHERE child_id = ? AND schedule_type = '2'
-           AND start_date > DATE_SUB(NOW(), INTERVAL 60 DAY)
-         GROUP BY DAYOFWEEK(start_date)
-         ORDER BY DAYOFWEEK(start_date)`,
+           AND start_date > (NOW() - INTERVAL '60 day')
+         GROUP BY (EXTRACT(DOW FROM start_date)+1)
+         ORDER BY (EXTRACT(DOW FROM start_date)+1)`,
         [child.child_member_id]
       )
       const DOW: Record<number, string> = { 1:'일',2:'월',3:'화',4:'수',5:'목',6:'금',7:'토' }
@@ -3469,7 +3755,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         identifier:     child.child_member_id,
         name:           child.name ?? null,
         age_label:      ageLabel(child.birth_date),
-        gender:         child.is_male_yn === 'Y' ? '남아' : child.is_male_yn === 'N' ? '여아' : null,
+        gender:         child.is_male_yn === 'Y' ? '남' : child.is_male_yn === 'N' ? '여' : null,
         therapist_name: child.therapist_name,
         doctor_name:    child.doctor_name,
         schedule,
@@ -3538,7 +3824,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         `INSERT INTO tb_trainingset (child_id, aim_joum, pos, coreword, tr_words, rsrvd_date,
                                      suit_age, growth_grade, is_ojoum_del_yn, is_only_noun_yn, is_cvcword_del_yn,
                                      min_len, max_len, can_read_yn, orderby_evowels_yn, orderby_ewords_yn)
-         VALUES (?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?) RETURNING idx`,
         params
       )
       return json({ idx: ins.insertId, action: 'insert' })
@@ -3644,11 +3930,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            t.code                 AS therapist_id,
            t.name                 AS therapist_name,
            t.depart_code          AS therapist_department,
-           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+           (SELECT to_char(s.start_date, 'YYYY.MM.DD')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_doctor_appointment,
-           (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+           (SELECT to_char(s.start_date, 'YYYY.MM.DD')
             FROM tb_schedule s
             WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
             ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
@@ -3763,7 +4049,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
       const [trows] = await conn.query<RowDataPacket[]>(
         `SELECT idx, act_date, analysislog,
-                JSON_LENGTH(JSON_EXTRACT(speechlog, '$.logLst')) AS speech_count
+                jsonb_array_length(speechlog->'logLst') AS speech_count
          FROM tb_childact_report
          WHERE id = ? AND use_type = 'training'
          ORDER BY act_date DESC, idx DESC`,
@@ -3815,8 +4101,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            r.idx                                AS id,
            c.idx                                AS child_id,
            c.id                                 AS identifier,
-           DATE_FORMAT(r.act_date, '%Y.%m.%d %H:%i') AS examined_at,
-           r.analysislog
+           to_char(r.act_date, 'YYYY.MM.DD HH24:MI') AS examined_at,
+           r.analysislog, r.speechlog, r.round, r.act_type
          FROM tb_childact_report r
          JOIN tb_member c ON c.id = r.id AND c.mtype = 'child' AND c.delete_yn = 'N'
          WHERE r.idx = ? AND c.instt_code = ?
@@ -3824,9 +4110,46 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         [did, user.instt_code]
       )
       if (!rows[0]) return err(404, 'not found')
-      const row = rows[0] as { id: number; child_id: number; identifier: string; examined_at: string; analysislog: string | null }
+      const row = rows[0] as {
+        id: number; child_id: number; identifier: string; examined_at: string
+        analysislog: string | null; speechlog: string | null; round: number | null; act_type: string | null
+      }
       const detail = parseAnalysislogDetail(row.analysislog)
-      return json({ id: row.id, child_id: row.child_id, identifier: row.identifier, examined_at: row.examined_at, ...detail })
+
+      // revised_statistics 에 개정 자음정확도(UTAP_PCC)가 없으면(실데이터엔 항상 없음)
+      // HIDONGDONG_TARGET_CONSONANT 기준으로 직접 계산해 채운다.
+      if (!detail.revised_statistics.some(r => r[0] === STTS_REVISED_LABEL.UTAP_PCC)) {
+        const revisedPcc = computeRevisedUtapPcc(row.analysislog, row.speechlog)
+        if (revisedPcc != null) {
+          detail.revised_statistics = [
+            [STTS_REVISED_LABEL.UTAP_PCC, revisedPcc.toFixed(2), '-', '-'],
+            ...detail.revised_statistics
+          ]
+        }
+      }
+
+      // round 로 1차/2차 짝을 찾아 자극반응도(stimulability) 를 조합한다.
+      let stimulability: StimulusRow[] = []
+      if (row.round != null && row.round !== -1 && row.act_type === 'hidongdong') {
+        if (row.round === row.id) {
+          const [pairRows] = await conn.query<RowDataPacket[]>(
+            `SELECT analysislog, speechlog FROM tb_childact_report
+             WHERE round = ? AND idx != ? AND act_type = 'hidongdong' ORDER BY idx LIMIT 1`,
+            [row.id, row.id]
+          )
+          const second = pairRows[0] as { analysislog: string | null; speechlog: string | null } | undefined
+          stimulability = buildStimulability(row.analysislog, row.speechlog, second?.analysislog ?? null, second?.speechlog ?? null)
+        } else {
+          const [pairRows] = await conn.query<RowDataPacket[]>(
+            `SELECT analysislog, speechlog FROM tb_childact_report WHERE idx = ? LIMIT 1`,
+            [row.round]
+          )
+          const first = pairRows[0] as { analysislog: string | null; speechlog: string | null } | undefined
+          stimulability = buildStimulability(first?.analysislog ?? null, first?.speechlog ?? null, row.analysislog, row.speechlog)
+        }
+      }
+
+      return json({ id: row.id, child_id: row.child_id, identifier: row.identifier, examined_at: row.examined_at, ...detail, stimulability })
     }
 
     // GET /api/staff?type=doctor|therapist  — 같은 기관 스태프 목록
@@ -3876,8 +4199,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
                 c.name        AS child_name,
                 c.id          AS child_member_id,
                 s.schedule_type,
-                DATE_FORMAT(s.start_date, '%Y-%m-%dT%H:%i:%s') AS start_datetime,
-                DATE_FORMAT(s.end_date,   '%Y-%m-%dT%H:%i:%s') AS end_datetime
+                to_char(s.start_date, 'YYYY-MM-DD"T"HH24:MI:SS') AS start_datetime,
+                to_char(s.end_date, 'YYYY-MM-DD"T"HH24:MI:SS') AS end_datetime
          FROM tb_schedule s
          JOIN tb_member c ON c.id = s.child_id AND c.mtype = 'child' AND c.delete_yn = 'N'
          WHERE s.instt_code = ?
@@ -3908,7 +4231,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const [result] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_schedule
            (child_id, schedule_type, start_date, end_date, instt_code, doctor_code, teacher_code, repeat_group_id, regist_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW()) RETURNING schedule_id AS idx`,
         [childRow.id, body.schedule_type ?? '2', body.start_datetime, body.end_datetime,
          user.instt_code, body.doctor_code ?? null, body.teacher_code ?? null, body.repeat_group_id ?? null]
       )
@@ -3931,8 +4254,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
                   c.idx         AS child_idx,
                   c.name        AS child_name,
                   c.id          AS child_member_id,
-                  DATE_FORMAT(s.start_date, '%Y-%m-%dT%H:%i:%s') AS start_datetime,
-                  DATE_FORMAT(s.end_date,   '%Y-%m-%dT%H:%i:%s') AS end_datetime,
+                  to_char(s.start_date, 'YYYY-MM-DD"T"HH24:MI:SS') AS start_datetime,
+                  to_char(s.end_date, 'YYYY-MM-DD"T"HH24:MI:SS') AS end_datetime,
                   s.doctor_code,
                   s.teacher_code,
                   COALESCE(sd.name, cd.name) AS doctor_name,
@@ -4050,7 +4373,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const tid = Number(treatDetailMatch[1])
       const [trows] = await conn.query<RowDataPacket[]>(
         `SELECT r.idx, r.id AS child_member_id, r.act_date, r.analysislog,
-                JSON_LENGTH(JSON_EXTRACT(r.speechlog, '$.logLst')) AS speech_count
+                jsonb_array_length(r.speechlog->'logLst') AS speech_count
          FROM tb_childact_report r
          JOIN tb_member c ON c.id = r.id AND c.mtype = 'child' AND c.delete_yn = 'N'
          WHERE r.idx = ? AND r.use_type = 'training' AND c.instt_code = ?
@@ -4072,10 +4395,12 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const serviceStartedAt = (childRow2[0] as { regist_date: unknown } | undefined)?.regist_date
       const [weekRows] = await conn.query<RowDataPacket[]>(
         `SELECT act_date, analysislog,
-                JSON_LENGTH(JSON_EXTRACT(speechlog, '$.logLst')) AS speech_count
+                jsonb_array_length(speechlog->'logLst') AS speech_count
          FROM tb_childact_report
-         WHERE id = ? AND use_type = 'training' AND YEARWEEK(act_date, 1) = YEARWEEK(?, 1)`,
-        [trow.child_member_id, trow.act_date])
+         WHERE id = ? AND use_type = 'training'
+           AND (EXTRACT(ISOYEAR FROM act_date)*100 + EXTRACT(WEEK FROM act_date))
+             = (EXTRACT(ISOYEAR FROM ?::date)*100 + EXTRACT(WEEK FROM ?::date))`,
+        [trow.child_member_id, trow.act_date, trow.act_date])
       const weekMap: Record<number, { acc: number[]; tries: number[]; mins: number[] }> = {}
       for (const wr of weekRows as Array<{ act_date: unknown; analysislog: string | null; speech_count: number | null }>) {
         const d = wr.act_date instanceof Date ? wr.act_date : new Date(wr.act_date as string)
@@ -4248,7 +4573,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const offset = (page - 1) * pageSize
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE,
-                DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS reg_date, BOARD_READ_COUNT
+                to_char(BOARD_SAVE_DATE, 'YYYY.MM.DD') AS reg_date, BOARD_READ_COUNT
          FROM tb_board_list ${where}
          ORDER BY BOARD_FIXED DESC, BOARD_SAVE_DATE DESC, BOARD_KEY DESC
          LIMIT ? OFFSET ?`,
@@ -4269,7 +4594,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE, BOARD_CONTENT,
-                DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS reg_date, BOARD_READ_COUNT
+                to_char(BOARD_SAVE_DATE, 'YYYY.MM.DD') AS reg_date, BOARD_READ_COUNT
          FROM tb_board_list WHERE BOARD_KEY = ? AND BOARD_ID = 'notice' LIMIT 1`, [nid]
       )
       if (!rows[0]) return err(404, 'not found')
@@ -4322,7 +4647,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         return {
           id: r.idx, identifier: r.identifier, name: r.name,
           birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
-          gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          gender: r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : '-',
           regist_date: rd ? rd.toISOString().slice(0, 16).replace('T', ' ') : null,
           is_new: rd ? (nowMs - rd.getTime()) < NEW_MS : false,
           doctor_code: r.doctor_code, doctor_name: r.doctor_name,
@@ -4409,7 +4734,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json({
         id: r.idx, identifier: r.identifier, name: r.name,
         birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
-        gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+        gender: r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : '-',
         regist_date: fmtDate(r.regist_date),
         doctor_code: r.doctor_code, doctor_name: r.doctor_name, doctor_department: r.doctor_department,
         teacher_code: r.teacher_code, therapist_name: r.therapist_name, therapist_department: r.therapist_department,
@@ -4426,8 +4751,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const fromStr = `${year}-${String(month).padStart(2, '0')}-01`
       const [schedRows] = await conn.query<RowDataPacket[]>(
         `SELECT s.schedule_id AS id, s.schedule_type,
-                DATE_FORMAT(s.start_date, '%Y-%m-%dT%H:%i:%s') AS start_datetime,
-                DATE_FORMAT(s.end_date,   '%Y-%m-%dT%H:%i:%s') AS end_datetime
+                to_char(s.start_date, 'YYYY-MM-DD"T"HH24:MI:SS') AS start_datetime,
+                to_char(s.end_date, 'YYYY-MM-DD"T"HH24:MI:SS') AS end_datetime
          FROM tb_schedule s
          JOIN tb_member c ON c.id = s.child_id AND c.idx = ? AND c.instt_code = ?
          WHERE s.instt_code = ?
@@ -4488,7 +4813,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       }
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT m.idx, m.code, m.name, m.depart_code, m.instt_code, m.status_yn,
-                DATEDIFF(NOW(), m.regist_date) <= 30 AS is_new
+                (NOW()::date - m.regist_date::date) <= 30 AS is_new
          FROM tb_member m
          WHERE m.mtype = ? AND m.instt_code = ? AND m.delete_yn = ? ${searchWhere}
          ORDER BY m.name`,
@@ -4513,7 +4838,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const mid = Number(adminMemberDetailMatch[1])
       const [mrows] = await conn.query<RowDataPacket[]>(
         `SELECT idx, code, name, depart_code, instt_code, mtype, status_yn,
-                DATEDIFF(NOW(), regist_date) <= 30 AS is_new
+                (NOW()::date - regist_date::date) <= 30 AS is_new
          FROM tb_member WHERE idx = ? AND instt_code = ? AND delete_yn = 'N'`,
         [mid, user.instt_code]
       )
@@ -4552,7 +4877,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         children: (crows as CRow[]).map(r => ({
           id: r.id, identifier: r.identifier, name: r.name,
           birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
-          gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          gender: r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : '-',
           next_doctor_appointment: fmtDate(r.next_doctor_appointment),
           next_therapy_appointment: fmtDate(r.next_therapy_appointment),
           therapist_name: r.therapist_name,
@@ -4618,7 +4943,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       return json((rows as DRow[]).map(r => ({
         id: r.idx, identifier: r.identifier, name: r.name,
         birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
-        gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+        gender: r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : '-',
         regist_date: null, is_new: false,
         doctor_code: null, doctor_name: null, teacher_code: null, therapist_name: null,
         deleted_at: fmtDate(r.deleted_at),
@@ -4640,11 +4965,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         `SELECT c.idx, c.id AS identifier, c.name, c.birth_date, c.is_male_yn,
                 c.regist_date, c.doctor_code, c.teacher_code,
                 d.name AS doctor_name, t.name AS therapist_name,
-                (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+                (SELECT to_char(s.start_date, 'YYYY.MM.DD')
                  FROM tb_schedule s
                  WHERE s.child_id = c.id AND s.schedule_type = '1' AND s.start_date > NOW()
                  ORDER BY s.start_date LIMIT 1) AS next_doctor_appointment,
-                (SELECT DATE_FORMAT(s.start_date, '%Y.%m.%d')
+                (SELECT to_char(s.start_date, 'YYYY.MM.DD')
                  FROM tb_schedule s
                  WHERE s.child_id = c.id AND s.schedule_type = '2' AND s.start_date > NOW()
                  ORDER BY s.start_date LIMIT 1) AS next_therapy_appointment
@@ -4663,7 +4988,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         return {
           id: r.idx, identifier: r.identifier, name: r.name,
           birth_date: fmtDate(r.birth_date), age_label: ageLabel(r.birth_date),
-          gender: r.is_male_yn === 'Y' ? '남아' : r.is_male_yn === 'N' ? '여아' : '-',
+          gender: r.is_male_yn === 'Y' ? '남' : r.is_male_yn === 'N' ? '여' : '-',
           regist_date: rd ? rd.toISOString().slice(0, 16).replace('T', ' ') : null,
           is_new: rd ? (nowMs - rd.getTime()) < NEW_MS : false,
           doctor_code: r.doctor_code, doctor_name: r.doctor_name,
@@ -4684,12 +5009,12 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
            SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' THEN 1 ELSE 0 END) AS doc_total,
            SUM(CASE WHEN mtype='teacher' AND delete_yn='N' THEN 1 ELSE 0 END) AS th_total,
            SUM(CASE WHEN mtype='child'   AND delete_yn='N' THEN 1 ELSE 0 END) AS ch_total,
-           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS doc_this,
-           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS doc_last,
-           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS th_this,
-           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS th_last,
-           SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND YEAR(regist_date)=YEAR(NOW())               AND MONTH(regist_date)=MONTH(NOW())                                      THEN 1 ELSE 0 END) AS ch_this,
-           SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND YEAR(regist_date)=YEAR(DATE_SUB(NOW(),INTERVAL 1 MONTH)) AND MONTH(regist_date)=MONTH(DATE_SUB(NOW(),INTERVAL 1 MONTH)) THEN 1 ELSE 0 END) AS ch_last
+           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND EXTRACT(YEAR FROM regist_date)=EXTRACT(YEAR FROM NOW())               AND EXTRACT(MONTH FROM regist_date)=EXTRACT(MONTH FROM NOW())                                      THEN 1 ELSE 0 END) AS doc_this,
+           SUM(CASE WHEN mtype='doctor'  AND delete_yn='N' AND EXTRACT(YEAR FROM regist_date)=EXTRACT(YEAR FROM (NOW() - INTERVAL '1 month')) AND EXTRACT(MONTH FROM regist_date)=EXTRACT(MONTH FROM (NOW() - INTERVAL '1 month')) THEN 1 ELSE 0 END) AS doc_last,
+           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' AND EXTRACT(YEAR FROM regist_date)=EXTRACT(YEAR FROM NOW())               AND EXTRACT(MONTH FROM regist_date)=EXTRACT(MONTH FROM NOW())                                      THEN 1 ELSE 0 END) AS th_this,
+           SUM(CASE WHEN mtype='teacher' AND delete_yn='N' AND EXTRACT(YEAR FROM regist_date)=EXTRACT(YEAR FROM (NOW() - INTERVAL '1 month')) AND EXTRACT(MONTH FROM regist_date)=EXTRACT(MONTH FROM (NOW() - INTERVAL '1 month')) THEN 1 ELSE 0 END) AS th_last,
+           SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND EXTRACT(YEAR FROM regist_date)=EXTRACT(YEAR FROM NOW())               AND EXTRACT(MONTH FROM regist_date)=EXTRACT(MONTH FROM NOW())                                      THEN 1 ELSE 0 END) AS ch_this,
+           SUM(CASE WHEN mtype='child'   AND delete_yn='N' AND EXTRACT(YEAR FROM regist_date)=EXTRACT(YEAR FROM (NOW() - INTERVAL '1 month')) AND EXTRACT(MONTH FROM regist_date)=EXTRACT(MONTH FROM (NOW() - INTERVAL '1 month')) THEN 1 ELSE 0 END) AS ch_last
          FROM tb_member WHERE instt_code = ?`,
         [inst]
       )
@@ -4698,15 +5023,15 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
       const [[docRows], [thRows], [cRows]] = await Promise.all([
         conn.query<RowDataPacket[]>(
-          `SELECT idx, code, name, depart_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
+          `SELECT idx, code, name, depart_code, to_char(regist_date, 'YYYY.MM.DD') AS regist_date
            FROM tb_member WHERE mtype='doctor' AND instt_code=? AND delete_yn='N'
            ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
         conn.query<RowDataPacket[]>(
-          `SELECT idx, code, name, depart_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
+          `SELECT idx, code, name, depart_code, to_char(regist_date, 'YYYY.MM.DD') AS regist_date
            FROM tb_member WHERE mtype='teacher' AND instt_code=? AND delete_yn='N'
            ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
         conn.query<RowDataPacket[]>(
-          `SELECT idx, id AS identifier, name, doctor_code, DATE_FORMAT(regist_date,'%Y.%m.%d') AS regist_date
+          `SELECT idx, id AS identifier, name, doctor_code, to_char(regist_date, 'YYYY.MM.DD') AS regist_date
            FROM tb_member WHERE mtype='child' AND instt_code=? AND delete_yn='N'
            ORDER BY regist_date DESC, idx DESC LIMIT 5`, [inst]),
       ])
@@ -4737,9 +5062,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT cs_idx, s_title, s_type,
-                DATE_FORMAT(regist_date, '%Y.%m.%d') AS regist_date,
+                to_char(regist_date, 'YYYY.MM.DD') AS regist_date,
                 reply_yn,
-                DATE_FORMAT(reply_date, '%Y.%m.%d') AS reply_date
+                to_char(reply_date, 'YYYY.MM.DD') AS reply_date
          FROM tb_support ${where}
          ORDER BY cs_idx DESC`,
         args
@@ -4760,7 +5085,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const [result] = await conn.query<ResultSetHeader>(
         `INSERT INTO tb_support
            (idx, s_title, memo, code, s_type, email, name, status, reply_yn, delete_yn, regist_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, '01', 'N', 'N', NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, '01', 'N', 'N', NOW()) RETURNING cs_idx AS idx`,
         [user.idx, s_title, memo, user.instt_code,
          body.s_type ?? '01', body.email ?? '', user.name]
       )
@@ -4804,9 +5129,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       if (method === 'GET') {
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT cs_idx, s_title, memo, s_type, email, name,
-                  DATE_FORMAT(regist_date, '%Y.%m.%d') AS regist_date,
+                  to_char(regist_date, 'YYYY.MM.DD') AS regist_date,
                   reply_yn, reply_memo,
-                  DATE_FORMAT(reply_date, '%Y.%m.%d') AS reply_date
+                  to_char(reply_date, 'YYYY.MM.DD') AS reply_date
            FROM tb_support
            WHERE cs_idx = ? AND idx = ? AND delete_yn = 'N'
            LIMIT 1`,
@@ -4847,8 +5172,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
     // GET /api/admin/db-schema?table=xxx  (임시 디버그)
     if (path === '/api/admin/db-schema' && method === 'GET') {
       const table = url.searchParams.get('table') ?? 'tb_board_list'
-      const rows = await conn.query(`SHOW COLUMNS FROM \`${table}\``)
-      return json({ columns: rows })
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) return err(400, 'invalid table name')
+      const columns = await showColumns(conn, table)
+      return json({ columns })
     }
 
     // GET /api/admin/notices?page=1&limit=20&search=
@@ -4870,7 +5196,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         let rows: RowDataPacket[] = []
         const [r] = await conn.query<RowDataPacket[]>(
           `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE, BOARD_READ_COUNT, REPLY_MEMO,
-                  DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS created_at,
+                  to_char(BOARD_SAVE_DATE, 'YYYY.MM.DD') AS created_at,
                   BOARD_USER_NAME AS author_name
            FROM tb_board_list
            ${where} ORDER BY BOARD_FIXED DESC, BOARD_SAVE_DATE DESC, BOARD_KEY DESC
@@ -4905,8 +5231,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const pinnedVal = body.is_pinned ? 'Y' : 'N'
 
       // 실제 컬럼 목록 조회 후 안전하게 INSERT
-      type ColInfo = { Field: string; Null: string; Default: string | null; Extra: string; Type: string }
-      const [colRows] = await conn.query<RowDataPacket[]>(`SHOW COLUMNS FROM tb_board_list`) as [ColInfo[], unknown]
+      const colRows = await showColumns(conn, 'tb_board_list')
       const colSet = new Set(colRows.map(c => c.Field))
 
       const cols: string[] = ['BOARD_ID']
@@ -4941,14 +5266,14 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       }
 
       const placeholders = vals.slice(1).map(() => '?')
-      const sql = `INSERT INTO tb_board_list (${cols.join(', ')}) VALUES ('notice', ${placeholders.join(', ')})`
+      const sql = `INSERT INTO tb_board_list (${cols.join(', ')}) VALUES ('notice', ${placeholders.join(', ')}) RETURNING BOARD_KEY AS idx`
       try {
         const [insertResult] = await conn.query<ResultSetHeader>(sql, vals.slice(1))
         const boardKey = insertResult.insertId
 
         if (body.files?.length && boardKey) {
-          const [fColRows] = await conn.query<RowDataPacket[]>(`SHOW COLUMNS FROM tb_board_file`) as [ColInfo[], unknown]
-          const fColSet = new Set((fColRows as ColInfo[]).map(c => c.Field))
+          const fColRows = await showColumns(conn, 'tb_board_file')
+          const fColSet = new Set(fColRows.map(c => c.Field))
           for (const f of body.files) {
             const fCols: string[] = []; const fVals: unknown[] = []
             const fStr = (col: string, val: string) => { if (fColSet.has(col)) { fCols.push(col); fVals.push(val) } }
@@ -4960,7 +5285,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
             fNum('FILE_SIZE', f.size)
             fStr('REPLY_YN', 'N')
             fStr('FILE_DATA', f.data)
-            for (const c of (fColRows as ColInfo[])) {
+            for (const c of fColRows) {
               if (fCols.includes(c.Field)) continue
               if (c.Null === 'NO' && c.Default === null && c.Extra !== 'auto_increment') {
                 fCols.push(c.Field); fVals.push((c.Type ?? '').includes('int') ? 0 : '')
@@ -5016,9 +5341,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       )
 
       if (body.files?.length) {
-        type ColInfo = { Field: string; Null: string; Default: string | null; Extra: string; Type: string }
-        const [fColRows] = await conn.query<RowDataPacket[]>(`SHOW COLUMNS FROM tb_board_file`) as [ColInfo[], unknown]
-        const fColSet = new Set((fColRows as ColInfo[]).map(c => c.Field))
+        const fColRows = await showColumns(conn, 'tb_board_file')
+        const fColSet = new Set(fColRows.map(c => c.Field))
         for (const f of body.files) {
           const fCols: string[] = []; const fVals: unknown[] = []
           const fStr = (col: string, val: string) => { if (fColSet.has(col)) { fCols.push(col); fVals.push(val) } }
@@ -5030,7 +5354,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           fNum('FILE_SIZE', f.size)
           fStr('REPLY_YN', 'N')
           fStr('FILE_DATA', f.data)
-          for (const c of (fColRows as ColInfo[])) {
+          for (const c of fColRows) {
             if (fCols.includes(c.Field)) continue
             if (c.Null === 'NO' && c.Default === null && c.Extra !== 'auto_increment') {
               fCols.push(c.Field); fVals.push((c.Type ?? '').includes('int') ? 0 : '')
@@ -5077,8 +5401,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const unanswered = Number((ucnt as RowDataPacket).cnt ?? 0)
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT s.cs_idx, s.s_type, s.name, m.id AS user_id, s.reply_yn, s.s_title,
-                DATE_FORMAT(s.regist_date, '%Y.%m.%d') AS regist_date,
-                DATE_FORMAT(s.reply_date, '%Y.%m.%d') AS reply_date
+                to_char(s.regist_date, 'YYYY.MM.DD') AS regist_date,
+                to_char(s.reply_date, 'YYYY.MM.DD') AS reply_date
          FROM tb_support s LEFT JOIN tb_member m ON s.idx = m.idx
          ${where} ORDER BY s.cs_idx DESC LIMIT ? OFFSET ?`,
         [...whereArgs, limit, (page - 1) * limit]
@@ -5120,9 +5444,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       if (method === 'GET') {
         const [[csRow]] = await conn.query<RowDataPacket[]>(
           `SELECT s.cs_idx, s.s_title, s.memo, s.s_type, s.email, s.name, m.id AS user_id, m.phone,
-                  DATE_FORMAT(s.regist_date, '%Y.%m.%d') AS regist_date,
+                  to_char(s.regist_date, 'YYYY.MM.DD') AS regist_date,
                   s.reply_yn, s.reply_memo,
-                  DATE_FORMAT(s.reply_date, '%Y.%m.%d') AS reply_date
+                  to_char(s.reply_date, 'YYYY.MM.DD') AS reply_date
            FROM tb_support s LEFT JOIN tb_member m ON s.idx = m.idx
            WHERE s.cs_idx = ? AND s.delete_yn = 'N' LIMIT 1`,
           [id]
@@ -5210,7 +5534,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         total = Number(cnt?.cnt ?? 0)
         const [rows] = await conn.query<RowDataPacket[]>(
           `SELECT BOARD_KEY, GUBUN, BOARD_FIXED, BOARD_TITLE, BOARD_READ_COUNT, REPLY_MEMO,
-                  DATE_FORMAT(BOARD_SAVE_DATE, '%Y.%m.%d') AS created_at,
+                  to_char(BOARD_SAVE_DATE, 'YYYY.MM.DD') AS created_at,
                   BOARD_USER_NAME AS author_name
            FROM tb_board_list ${where}
            ORDER BY BOARD_SAVE_DATE DESC, BOARD_KEY DESC LIMIT ? OFFSET ?`,
@@ -5239,9 +5563,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       }
       if (!body.title?.trim()) return err(400, '제목을 입력해주세요.')
       const fixedVal = body.status === 'private' ? 'N' : 'Y'
-      type ColInfo2 = { Field: string; Null: string; Default: string | null; Extra: string; Type: string }
-      const [colRows2] = await conn.query<RowDataPacket[]>(`SHOW COLUMNS FROM tb_board_list`) as [ColInfo2[], unknown]
-      const colSet2 = new Set((colRows2 as ColInfo2[]).map(c => c.Field))
+      const colRows2 = await showColumns(conn, 'tb_board_list')
+      const colSet2 = new Set(colRows2.map(c => c.Field))
       const cols2: string[] = ['BOARD_ID']
       const vals2: unknown[] = ['faq']
       const mNum = (col: string, val: number) => { if (colSet2.has(col)) { cols2.push(col); vals2.push(val) } }
@@ -5254,7 +5577,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       mStr('BOARD_CONTENT', body.content ?? '')
       mStr('BOARD_USER_ID', String(user.id ?? ''))
       mStr('BOARD_USER_NAME', String(user.name ?? user.id ?? ''))
-      for (const c of (colRows2 as ColInfo2[])) {
+      for (const c of colRows2) {
         if (cols2.includes(c.Field)) continue
         if (c.Null === 'NO' && c.Default === null && c.Extra !== 'auto_increment') {
           cols2.push(c.Field); vals2.push(c.Type?.includes('int') ? 0 : '')
@@ -5351,7 +5674,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
                   COUNT(DISTINCT CASE WHEN m.mtype='doctor' THEN m.idx END) AS doctor_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='teacher' THEN m.idx END) AS therapist_count,
                   COUNT(DISTINCT CASE WHEN m.mtype='child' THEN m.idx END) AS child_count,
-                  DATE_FORMAT(MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END), '%Y.%m.%d') AS regist_date
+                  to_char(MIN(CASE WHEN m.mtype='iadmin' THEN m.regist_date END), 'YYYY.MM.DD') AS regist_date
            FROM tb_member m
            LEFT JOIN tb_instt i ON UPPER(i.instt_code) = UPPER(m.instt_code)
            WHERE m.instt_code IS NOT NULL AND m.instt_code != ''
@@ -5401,7 +5724,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
           `SELECT m.idx, m.name, m.id, m.instt_code, m.approval_status,
                   COALESCE(i.name, m.instt_code) AS inst_name,
                   COALESCE(i.itype, '') AS inst_type,
-                  DATE_FORMAT(m.regist_date, '%Y.%m.%d') AS regist_date
+                  to_char(m.regist_date, 'YYYY.MM.DD') AS regist_date
            FROM tb_member m
            LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
            WHERE m.mtype = 'iadmin' AND m.delete_yn = 'N' ${sClause}
@@ -5441,10 +5764,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       ) as [RowDataPacket[], unknown]
       const [[monthly]] = await conn.query<RowDataPacket[]>(
         `SELECT
-           SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS new_web_this,
-           SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= DATE_FORMAT(DATE_SUB(NOW(),INTERVAL 1 MONTH),'%Y-%m-01') AND regist_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS new_web_last,
-           SUM(mtype='child' AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS new_app_this,
-           SUM(mtype='child' AND delete_yn='N' AND regist_date >= DATE_FORMAT(DATE_SUB(NOW(),INTERVAL 1 MONTH),'%Y-%m-01') AND regist_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS new_app_last
+           SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= date_trunc('month', NOW())) AS new_web_this,
+           SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= date_trunc('month', NOW() - INTERVAL '1 month') AND regist_date < date_trunc('month', NOW())) AS new_web_last,
+           SUM(mtype='child' AND delete_yn='N' AND regist_date >= date_trunc('month', NOW())) AS new_app_this,
+           SUM(mtype='child' AND delete_yn='N' AND regist_date >= date_trunc('month', NOW() - INTERVAL '1 month') AND regist_date < date_trunc('month', NOW())) AS new_app_last
          FROM tb_member`
       ) as [RowDataPacket[], unknown]
 
@@ -5464,18 +5787,18 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       try {
         const [[ms]] = await conn.query<RowDataPacket[]>(
           `SELECT
-             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= DATE_FORMAT(NOW(),'%Y-%m-01') THEN l.member_idx END) AS web_mau,
-             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= DATE_SUB(NOW(),INTERVAL 7 DAY) THEN l.member_idx END) AS web_wau,
-             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND DATE(l.login_date)=CURDATE() THEN l.member_idx END) AS web_dau,
-             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= DATE_FORMAT(DATE_SUB(NOW(),INTERVAL 1 MONTH),'%Y-%m-01') AND l.login_date < DATE_FORMAT(NOW(),'%Y-%m-01') THEN l.member_idx END) AS web_mau_prev,
-             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= DATE_SUB(NOW(),INTERVAL 14 DAY) AND l.login_date < DATE_SUB(NOW(),INTERVAL 7 DAY) THEN l.member_idx END) AS web_wau_prev,
-             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND DATE(l.login_date)=DATE_SUB(CURDATE(),INTERVAL 1 DAY) THEN l.member_idx END) AS web_dau_prev,
-             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= DATE_FORMAT(NOW(),'%Y-%m-01') THEN l.member_idx END) AS app_mau,
-             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= DATE_SUB(NOW(),INTERVAL 7 DAY) THEN l.member_idx END) AS app_wau,
-             COUNT(DISTINCT CASE WHEN m.mtype='child' AND DATE(l.login_date)=CURDATE() THEN l.member_idx END) AS app_dau,
-             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= DATE_FORMAT(DATE_SUB(NOW(),INTERVAL 1 MONTH),'%Y-%m-01') AND l.login_date < DATE_FORMAT(NOW(),'%Y-%m-01') THEN l.member_idx END) AS app_mau_prev,
-             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= DATE_SUB(NOW(),INTERVAL 14 DAY) AND l.login_date < DATE_SUB(NOW(),INTERVAL 7 DAY) THEN l.member_idx END) AS app_wau_prev,
-             COUNT(DISTINCT CASE WHEN m.mtype='child' AND DATE(l.login_date)=DATE_SUB(CURDATE(),INTERVAL 1 DAY) THEN l.member_idx END) AS app_dau_prev
+             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= date_trunc('month', NOW()) THEN l.member_idx END) AS web_mau,
+             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= (NOW() - INTERVAL '7 day') THEN l.member_idx END) AS web_wau,
+             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND (l.login_date)::date=CURRENT_DATE THEN l.member_idx END) AS web_dau,
+             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= date_trunc('month', NOW() - INTERVAL '1 month') AND l.login_date < date_trunc('month', NOW()) THEN l.member_idx END) AS web_mau_prev,
+             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND l.login_date >= (NOW() - INTERVAL '14 day') AND l.login_date < (NOW() - INTERVAL '7 day') THEN l.member_idx END) AS web_wau_prev,
+             COUNT(DISTINCT CASE WHEN m.mtype IN (${webMtypes}) AND (l.login_date)::date=(CURRENT_DATE - INTERVAL '1 day') THEN l.member_idx END) AS web_dau_prev,
+             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= date_trunc('month', NOW()) THEN l.member_idx END) AS app_mau,
+             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= (NOW() - INTERVAL '7 day') THEN l.member_idx END) AS app_wau,
+             COUNT(DISTINCT CASE WHEN m.mtype='child' AND (l.login_date)::date=CURRENT_DATE THEN l.member_idx END) AS app_dau,
+             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= date_trunc('month', NOW() - INTERVAL '1 month') AND l.login_date < date_trunc('month', NOW()) THEN l.member_idx END) AS app_mau_prev,
+             COUNT(DISTINCT CASE WHEN m.mtype='child' AND l.login_date >= (NOW() - INTERVAL '14 day') AND l.login_date < (NOW() - INTERVAL '7 day') THEN l.member_idx END) AS app_wau_prev,
+             COUNT(DISTINCT CASE WHEN m.mtype='child' AND (l.login_date)::date=(CURRENT_DATE - INTERVAL '1 day') THEN l.member_idx END) AS app_dau_prev
            FROM tb_login_log l JOIN tb_member m ON m.idx=l.member_idx AND m.delete_yn='N'`
         ) as [RowDataPacket[], unknown]
         mau_stats = { web: buildMau(ms as RowDataPacket, 'web_'), app: buildMau(ms as RowDataPacket, 'app_') }
@@ -5484,18 +5807,18 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         try {
           const [[ms]] = await conn.query<RowDataPacket[]>(
             `SELECT
-               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS web_mau,
-               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= DATE_SUB(NOW(),INTERVAL 7 DAY)) AS web_wau,
-               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND DATE(regist_date)=CURDATE()) AS web_dau,
-               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= DATE_FORMAT(DATE_SUB(NOW(),INTERVAL 1 MONTH),'%Y-%m-01') AND regist_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS web_mau_prev,
-               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= DATE_SUB(NOW(),INTERVAL 14 DAY) AND regist_date < DATE_SUB(NOW(),INTERVAL 7 DAY)) AS web_wau_prev,
-               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND DATE(regist_date)=DATE_SUB(CURDATE(),INTERVAL 1 DAY)) AS web_dau_prev,
-               SUM(mtype='child' AND delete_yn='N' AND regist_date >= DATE_FORMAT(NOW(),'%Y-%m-01')) AS app_mau,
-               SUM(mtype='child' AND delete_yn='N' AND regist_date >= DATE_SUB(NOW(),INTERVAL 7 DAY)) AS app_wau,
-               SUM(mtype='child' AND delete_yn='N' AND DATE(regist_date)=CURDATE()) AS app_dau,
-               SUM(mtype='child' AND delete_yn='N' AND regist_date >= DATE_FORMAT(DATE_SUB(NOW(),INTERVAL 1 MONTH),'%Y-%m-01') AND regist_date < DATE_FORMAT(NOW(),'%Y-%m-01')) AS app_mau_prev,
-               SUM(mtype='child' AND delete_yn='N' AND regist_date >= DATE_SUB(NOW(),INTERVAL 14 DAY) AND regist_date < DATE_SUB(NOW(),INTERVAL 7 DAY)) AS app_wau_prev,
-               SUM(mtype='child' AND delete_yn='N' AND DATE(regist_date)=DATE_SUB(CURDATE(),INTERVAL 1 DAY)) AS app_dau_prev
+               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= date_trunc('month', NOW())) AS web_mau,
+               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= (NOW() - INTERVAL '7 day')) AS web_wau,
+               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND (regist_date)::date=CURRENT_DATE) AS web_dau,
+               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= date_trunc('month', NOW() - INTERVAL '1 month') AND regist_date < date_trunc('month', NOW())) AS web_mau_prev,
+               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND regist_date >= (NOW() - INTERVAL '14 day') AND regist_date < (NOW() - INTERVAL '7 day')) AS web_wau_prev,
+               SUM(mtype IN (${webMtypes}) AND delete_yn='N' AND approval_status IS NULL AND (regist_date)::date=(CURRENT_DATE - INTERVAL '1 day')) AS web_dau_prev,
+               SUM(mtype='child' AND delete_yn='N' AND regist_date >= date_trunc('month', NOW())) AS app_mau,
+               SUM(mtype='child' AND delete_yn='N' AND regist_date >= (NOW() - INTERVAL '7 day')) AS app_wau,
+               SUM(mtype='child' AND delete_yn='N' AND (regist_date)::date=CURRENT_DATE) AS app_dau,
+               SUM(mtype='child' AND delete_yn='N' AND regist_date >= date_trunc('month', NOW() - INTERVAL '1 month') AND regist_date < date_trunc('month', NOW())) AS app_mau_prev,
+               SUM(mtype='child' AND delete_yn='N' AND regist_date >= (NOW() - INTERVAL '14 day') AND regist_date < (NOW() - INTERVAL '7 day')) AS app_wau_prev,
+               SUM(mtype='child' AND delete_yn='N' AND (regist_date)::date=(CURRENT_DATE - INTERVAL '1 day')) AS app_dau_prev
              FROM tb_member`
           ) as [RowDataPacket[], unknown]
           mau_stats = { web: buildMau(ms as RowDataPacket, 'web_'), app: buildMau(ms as RowDataPacket, 'app_') }
@@ -5506,7 +5829,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         `SELECT COUNT(*) AS cnt FROM tb_member WHERE approval_status='승인대기' AND delete_yn='N'`
       ) as [RowDataPacket[], unknown]
       const [pendingRows] = await conn.query<RowDataPacket[]>(
-        `SELECT m.idx, m.name, m.mtype, m.instt_code, DATE_FORMAT(m.regist_date,'%Y.%m.%d') AS regist_date,
+        `SELECT m.idx, m.name, m.mtype, m.instt_code, to_char(m.regist_date, 'YYYY.MM.DD') AS regist_date,
                 i.name AS inst_name
          FROM tb_member m
          LEFT JOIN tb_instt i ON i.instt_code = m.instt_code
@@ -5521,7 +5844,7 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         ) as [RowDataPacket[], unknown]
         unanswered_total = Number(ucnt?.cnt ?? 0)
         const [iqRows] = await conn.query<RowDataPacket[]>(
-          `SELECT s.cs_idx, s.name, s.s_title, DATE_FORMAT(s.regist_date,'%Y.%m.%d') AS regist_date, s.s_type
+          `SELECT s.cs_idx, s.name, s.s_title, to_char(s.regist_date, 'YYYY.MM.DD') AS regist_date, s.s_type
            FROM tb_support s WHERE s.delete_yn='N' AND s.reply_yn='N'
            ORDER BY s.cs_idx DESC LIMIT 5`
         ) as [RowDataPacket[], unknown]
@@ -5531,13 +5854,13 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       let pinned_notices: unknown[] = [], recent_notices: unknown[] = []
       try {
         const [pRows] = await conn.query<RowDataPacket[]>(
-          `SELECT BOARD_KEY AS idx, BOARD_TITLE AS title, DATE_FORMAT(BOARD_SAVE_DATE,'%Y.%m.%d') AS created_at
+          `SELECT BOARD_KEY AS idx, BOARD_TITLE AS title, to_char(BOARD_SAVE_DATE, 'YYYY.MM.DD') AS created_at
            FROM tb_board_list WHERE BOARD_ID='notice' AND BOARD_FIXED='Y'
            ORDER BY BOARD_SAVE_DATE DESC LIMIT 5`
         ) as [RowDataPacket[], unknown]
         pinned_notices = pRows
         const [rRows] = await conn.query<RowDataPacket[]>(
-          `SELECT BOARD_KEY AS idx, BOARD_TITLE AS title, DATE_FORMAT(BOARD_SAVE_DATE,'%Y.%m.%d') AS created_at
+          `SELECT BOARD_KEY AS idx, BOARD_TITLE AS title, to_char(BOARD_SAVE_DATE, 'YYYY.MM.DD') AS created_at
            FROM tb_board_list WHERE BOARD_ID='notice' AND (BOARD_FIXED IS NULL OR BOARD_FIXED='N')
            ORDER BY BOARD_SAVE_DATE DESC LIMIT 5`
         ) as [RowDataPacket[], unknown]

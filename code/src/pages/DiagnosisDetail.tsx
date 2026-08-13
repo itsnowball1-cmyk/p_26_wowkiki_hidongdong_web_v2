@@ -5,7 +5,7 @@ import TopBar from '../components/TopBar'
 import { useRouter } from '../lib/router'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
-import type { DiagnosisDetailDto, DiagnosisListItem } from '../lib/api'
+import type { DiagnosisDetailDto, DiagnosisListItem, StimulusRow } from '../lib/api'
 import { exportDiagnosisToExcel, exportElementToPdf, type DiagnosisExportData } from '../lib/exporters'
 
 type Props = { childId: number; diagnosisId: number }
@@ -24,7 +24,14 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
     identifier: diagData?.identifier ?? '-',
     examinedAt: diagData?.examined_at ?? '-',
     duration: diagData?.duration_label ?? '-',
-    stimulus: [],
+    stimulus: (diagData?.stimulability ?? []).map(s => ({
+      target: s.target,
+      first: s.first || '-',
+      firstError: s.firstError || '-',
+      firstAccuracy: s.firstAccuracy != null ? String(s.firstAccuracy) : '-',
+      second: s.second || '-',
+      deltaText: formatStimulusDelta(s.firstAccuracy, s.secondAccuracy)
+    })),
     consonantMetrics: (diagData?.statistics ?? []) as DiagnosisExportData['consonantMetrics'],
     revisedMetrics: (diagData?.revised_statistics ?? []) as DiagnosisExportData['revisedMetrics'],
     errorRank: (diagData?.error_rank ?? []).map(r => [r.rank, r.type, r.ratio] as const),
@@ -179,7 +186,16 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {/* stimulability 구조가 확인되면 여기에 렌더링 */}
+                      {stimulusRows.map((s, i) => (
+                        <tr key={i}>
+                          <Td>{s.target}</Td>
+                          <Td>{s.first || '-'}</Td>
+                          <Td>{s.firstError || '-'}</Td>
+                          <Td>{s.firstAccuracy ?? '-'}</Td>
+                          <Td>{s.second || '-'}</Td>
+                          <StimulusDeltaCell first={s.firstAccuracy} second={s.secondAccuracy} />
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -284,7 +300,8 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
             {/* 진단 녹음 듣기 — 녹음 데이터가 있을 때만 노출. PDF 에는 제외. */}
             {recordings.length > 0 && (
               <section data-pdf-exclude>
-                <SectionTitle className="mb-5">진단 녹음 듣기</SectionTitle>
+                <SectionTitle className="mb-1">진단 녹음 듣기</SectionTitle>
+                <p className="text-[13px] text-ink-400 mb-4">파일 다운로드 시 녹음 내용은 함께 저장되지 않습니다.</p>
                 <RecordingGrid recordings={recordings} />
               </section>
             )}
@@ -292,31 +309,40 @@ export default function DiagnosisDetail({ childId, diagnosisId }: Props) {
           </div>
 
           {/* Pager */}
-          <div className="flex items-center justify-center gap-4 pt-4 pb-12">
+          <div className="flex flex-col items-center gap-4 pt-4 pb-12">
+            <div className="flex items-center justify-center gap-4">
+              <button
+                type="button"
+                disabled={prevDiagnosisId === null}
+                className={prevDiagnosisId !== null
+                  ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                  : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+                }
+                onClick={() => prevDiagnosisId !== null && go({ name: 'diagnosis', childId, diagnosisId: prevDiagnosisId })}
+              >
+                &lt; 이전
+              </button>
+              <span className="text-[18px] font-medium text-ink-900">
+                {diagData?.examined_at ?? '-'}
+              </span>
+              <button
+                type="button"
+                disabled={nextDiagnosisId === null}
+                className={nextDiagnosisId !== null
+                  ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
+                  : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
+                }
+                onClick={() => nextDiagnosisId !== null && go({ name: 'diagnosis', childId, diagnosisId: nextDiagnosisId })}
+              >
+                다음 &gt;
+              </button>
+            </div>
             <button
               type="button"
-              disabled={prevDiagnosisId === null}
-              className={prevDiagnosisId !== null
-                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
-                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
-              }
-              onClick={() => prevDiagnosisId !== null && go({ name: 'diagnosis', childId, diagnosisId: prevDiagnosisId })}
+              onClick={() => go({ name: 'detail', id: childId })}
+              className="text-[14px] text-ink-900 underline underline-offset-4 hover:text-brand transition-colors"
             >
-              &lt; 이전
-            </button>
-            <span className="text-[18px] font-medium text-ink-900">
-              {diagData?.examined_at ?? '-'}
-            </span>
-            <button
-              type="button"
-              disabled={nextDiagnosisId === null}
-              className={nextDiagnosisId !== null
-                ? 'h-[42px] px-5 rounded-[5px] border border-brand text-brand text-[14px] font-medium hover:bg-brand hover:text-white transition-colors'
-                : 'h-[42px] px-5 rounded-[5px] border border-[#CBCBCB] text-[#CCCCCC] text-[14px] font-medium cursor-not-allowed'
-              }
-              onClick={() => nextDiagnosisId !== null && go({ name: 'diagnosis', childId, diagnosisId: nextDiagnosisId })}
-            >
-              다음 &gt;
+              목록으로 돌아가기
             </button>
           </div>
         </main>
@@ -439,6 +465,27 @@ function Td({ children, className = '' }: { children: React.ReactNode; className
       {children}
     </td>
   )
+}
+
+// 1차→2차 정확도 변화를 "80 ▲20" / "60 -" 같은 순수 텍스트로(엑셀 export용).
+function formatStimulusDelta(first: number | null, second: number | null): string {
+  if (second == null) return ''
+  if (first == null) return `${second}`
+  const d = second - first
+  if (d > 0) return `${second} ▲${d}`
+  if (d < 0) return `${second} ▼${Math.abs(d)}`
+  return `${second} -`
+}
+
+// 화면용: 증가는 파란 ▲, 감소는 빨간 ▼ 로 색을 입혀 렌더링.
+function StimulusDeltaCell({ first, second }: { first: StimulusRow['firstAccuracy']; second: StimulusRow['secondAccuracy'] }) {
+  if (second == null) return <Td>-</Td>
+  if (first == null) return <Td>{second}</Td>
+  const d = second - first
+  if (d === 0) return <Td>{second} <span className="text-ink-400">-</span></Td>
+  const color = d > 0 ? 'text-delta-up' : 'text-delta-down'
+  const arrow = d > 0 ? `▲${d}` : `▼${Math.abs(d)}`
+  return <Td>{second} <span className={color}>{arrow}</span></Td>
 }
 
 function MetricsTable({

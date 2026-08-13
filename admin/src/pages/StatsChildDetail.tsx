@@ -101,7 +101,7 @@ export default function StatsChildDetail({
           <span className="text-[#585858]">{child.name}({calcAge(child.birth_date)})</span>
           <span className="text-[#484848]">{child.code ?? '-'}</span>
           <span className="text-[#484848]">{child.birth_date ?? '-'}</span>
-          <span className="text-[#585858]">{child.is_male ? '남아' : '여아'}</span>
+          <span className="text-[#585858]">{child.is_male ? '남' : '여'}</span>
           <span className="text-[#585858]">{child.regist_date}</span>
         </div>
       </div>

@@ -48,6 +48,7 @@ export default function ChildDetail({ id }: Props) {
   const [showRediagModal, setShowRediagModal] = useState(false)
   const [rediagDate, setRediagDate] = useState<string | null>(null)
   const [customDismissed, setCustomDismissed] = useState(false)
+  const [activeTab, setActiveTab] = useState<'diagnosis' | 'treatment'>('diagnosis')
 
   const needsCustomChange = useMemo(() => {
     const diagAcc = diagnoses[0]?.accuracy_pct ?? null
@@ -186,11 +187,15 @@ export default function ChildDetail({ id }: Props) {
             </div>
           </section>
 
-          {/* 진단 이력 */}
-          <DiagnosisSection childId={id} identifier={detail.child.identifier} diagnoses={diagnoses} />
-
-          {/* 치료 이력 */}
-          <TreatmentSection childId={id} identifier={detail.child.identifier} treatments={treatments} />
+          {/* 진단/치료 이력 탭 */}
+          <section>
+            <DetailTabs active={activeTab} onChange={setActiveTab} />
+            <div className="pt-6">
+              {activeTab === 'diagnosis'
+                ? <DiagnosisSection childId={id} identifier={detail.child.identifier} diagnoses={diagnoses} />
+                : <TreatmentSection childId={id} identifier={detail.child.identifier} treatments={treatments} />}
+            </div>
+          </section>
 
           <div className="text-[12px] text-ink-400 pt-4">아동 ID: {id}</div>
         </main>
@@ -569,6 +574,11 @@ function MemoCard({
   const { user } = useAuth()
   const canEdit = user?.role === role
   const title = `${roleLabel(role)} 메모`
+  const emptyNotice = role === 'admin'
+    ? '작성한 메모는 담당 의사와 담당 치료사가 확인할 수 있습니다.'
+    : role === 'doctor'
+      ? '작성한 메모는 관리자와 담당 치료사가 확인할 수 있습니다.'
+      : '작성한 메모는 관리자와 담당 의사가 확인할 수 있습니다.'
 
   useEffect(() => {
     setValue(initial)
@@ -610,7 +620,7 @@ function MemoCard({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         readOnly={!canEdit}
-        placeholder={canEdit ? '메모를 입력하세요' : '아직 작성된 메모가 없습니다.'}
+        placeholder={canEdit ? emptyNotice : '아직 작성된 메모가 없습니다.'}
         className="w-full h-[100px] resize-none border border-line rounded-[5px] p-3 text-[14px] text-ink-700 focus:outline-none focus:border-brand read-only:bg-surface-active read-only:cursor-not-allowed"
       />
       <div className="mt-3 text-[12px] text-ink-200">최종 정보 수정일시 : {savedAt}</div>
@@ -715,6 +725,51 @@ async function downloadAsPdf(title: string, filename: string, headers: string[],
 }
 
 /* ---------------------------------- */
+/* 진단/치료 이력 탭                    */
+/* ---------------------------------- */
+function DetailTabs({
+  active,
+  onChange
+}: {
+  active: 'diagnosis' | 'treatment'
+  onChange: (tab: 'diagnosis' | 'treatment') => void
+}) {
+  const tabs: Array<['diagnosis' | 'treatment', string]> = [
+    ['diagnosis', '진단 이력'],
+    ['treatment', '치료 이력']
+  ]
+  return (
+    <div className="relative">
+      <div className="absolute inset-x-0 bottom-0" style={{ height: 1, backgroundColor: '#DEDEDE' }} />
+      <div className="relative inline-flex border-t border-x border-line rounded-t-[10px] overflow-hidden bg-surface-card">
+        {tabs.map(([key, label], i) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange(key)}
+            className={`relative px-12 py-5 text-[18px] font-semibold transition-colors ${
+              i === 0 ? 'border-r border-line' : ''
+            } ${
+              active === key ? 'text-ink-900' : 'text-ink-300 hover:text-ink-500'
+            }`}
+            style={{
+              borderBottomWidth: 2,
+              borderBottomStyle: 'solid',
+              borderBottomColor: active === key ? 'transparent' : '#DEDEDE'
+            }}
+          >
+            {active === key && (
+              <span className="absolute top-0 left-0 right-0 h-[6px] bg-brand" />
+            )}
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ---------------------------------- */
 /* 진단 이력                           */
 /* ---------------------------------- */
 function DiagnosisSection({ childId, identifier, diagnoses }: { childId: number; identifier: string; diagnoses: DiagnosisListItem[] }) {
@@ -757,8 +812,6 @@ function DiagnosisSection({ childId, identifier, diagnoses }: { childId: number;
 
   return (
     <section>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-5">진단 이력</h2>
-
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-5 mb-6">
         <div className="bg-surface-card border border-line rounded-[5px] p-5">
           <div className="text-[18px] font-medium text-ink-850 mb-1">최근진단일</div>
@@ -1188,8 +1241,6 @@ function TreatmentSection({ childId, identifier, treatments }: { childId: number
 
   return (
     <section>
-      <h2 className="text-[18px] font-semibold text-ink-900 mb-4">치료 이력</h2>
-
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div className="inline-flex bg-line-soft p-1 rounded-[8px]">
           {(['week', 'month', '3month'] as const).map((p) => {
