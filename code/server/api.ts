@@ -655,7 +655,7 @@ function idFormatError(v: unknown): string | null {
   if (v.length > ID_MAX_LEN) return `아이디는 ${ID_MAX_LEN}자 이하로 입력해주세요.`
   if (!ID_PW_ALLOWED.test(v)) {
     return HANGUL_RE.test(v)
-      ? '아이디에 한글은 사용할 수 없습니다. 영문 대소문자, 숫자, 밑줄(_)만 입력해주세요.'
+      ? '아이디에 한글과 특수문자는 사용할 수 없습니다.'
       : '아이디는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
   }
   return null
