@@ -575,8 +575,10 @@ const legacyMsgText = (code: number | string) => LEGACY_MSG[String(code)] ?? '�
 const legacyMap = (success: boolean, code: number | string, map: Record<string, unknown> = {}) =>
   json({ ...map, success, message: legacyMsgText(code) })
 // getResultOnlyMessageJson($success, $code)
-const legacyMsg = (success: boolean, code: number | string) =>
-  json({ success, message: legacyMsgText(code) })
+// message 를 넘기면 코드 테이블 대신 그 문구를 그대로 싣는다. 응답 스키마({success,message})는
+// 동일하고, Unity 클라이언트는 message 를 문자열로 읽어 그대로 표시한다(APIRes.message = JToken).
+const legacyMsg = (success: boolean, code: number | string, message?: string) =>
+  json({ success, message: message ?? legacyMsgText(code) })
 
 // Unity 클라이언트는 GET 에도 JSON 본문을 싣어 보낸다(php://input). rawBody 에서 파싱.
 function legacyBody(rawBody: Buffer | undefined): Record<string, unknown> {
@@ -642,17 +644,30 @@ const ID_PW_ALLOWED = /^[A-Za-z0-9_]+$/
 const ID_MAX_LEN = 40
 const PW_MAX_LEN = 45
 
+// 한글(음절·자모) 포함 여부 — 위반 사유를 구체적으로 알려주기 위해 구분한다.
+// 태블릿 Unity 앱은 한글 키보드가 기본이라 한글 입력 시도가 잦아, 단순히 "형식 오류"가
+// 아니라 "한글은 쓸 수 없다"를 명시해야 사용자가 바로 고칠 수 있다.
+const HANGUL_RE = /[ㄱ-ㆎ가-힣]/
+
 /** 통과 시 null, 위반 시 사용자에게 보여줄 사유. */
 function idFormatError(v: unknown): string | null {
   if (typeof v !== 'string' || v.length === 0) return '아이디를 입력해주세요.'
   if (v.length > ID_MAX_LEN) return `아이디는 ${ID_MAX_LEN}자 이하로 입력해주세요.`
-  if (!ID_PW_ALLOWED.test(v)) return '아이디는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
+  if (!ID_PW_ALLOWED.test(v)) {
+    return HANGUL_RE.test(v)
+      ? '아이디에 한글은 사용할 수 없습니다. 영문 대소문자, 숫자, 밑줄(_)만 입력해주세요.'
+      : '아이디는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
+  }
   return null
 }
 function pwFormatError(v: unknown): string | null {
   if (typeof v !== 'string' || v.length === 0) return '비밀번호를 입력해주세요.'
   if (v.length > PW_MAX_LEN) return `비밀번호는 ${PW_MAX_LEN}자 이하로 입력해주세요.`
-  if (!ID_PW_ALLOWED.test(v)) return '비밀번호는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
+  if (!ID_PW_ALLOWED.test(v)) {
+    return HANGUL_RE.test(v)
+      ? '비밀번호에 한글은 사용할 수 없습니다. 영문 대소문자, 숫자, 밑줄(_)만 입력해주세요.'
+      : '비밀번호는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
+  }
   return null
 }
 
@@ -1229,9 +1244,11 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         } else if (!id || !pw || !mtype || !name) {
           return legacyMsg(false, -30001)
         }
-        // 아동 계정이 이 경로로 만들어진다. 화면 검증이 없는 클라이언트라 서버에서 막는다.
-        // -30002 = '필요한 parameter가 잘못 됐습니다.' (기존 코드라 구버전 앱도 문구를 표시함)
-        if (idFormatError(id) || pwFormatError(pw)) return legacyMsg(false, -30002)
+        // 아동 계정이 이 경로로 만들어진다. 화면 검증이 없는 클라이언트라 서버에서 막고,
+        // 사유(한글 불가 등)를 message 에 그대로 실어 앱이 사용자에게 보여줄 수 있게 한다.
+        // 코드는 기존 -30002 유지 — 코드로 분기하는 구버전 앱과의 호환을 깨지 않기 위함.
+        const legacyIdPwErr = idFormatError(id) ?? pwFormatError(pw)
+        if (legacyIdPwErr) return legacyMsg(false, -30002, legacyIdPwErr)
         const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [id])
         if (exist[0]) return legacyMsg(false, -18)
         const [r] = await conn.query<ResultSetHeader>(
