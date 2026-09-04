@@ -28,19 +28,23 @@ const INITIAL: FormState = {
   department: ''
 }
 
-type IdStatus = 'idle' | 'checking' | 'available' | 'taken' | 'error'
+type IdStatus = 'idle' | 'checking' | 'available' | 'taken' | 'error' | 'format'
 type InsttStatus = 'idle' | 'checking' | 'valid' | 'invalid' | 'error'
 
-function validatePassword(pw: string): { valid: boolean; lengthOk: boolean; comboOk: boolean } {
+// 서버(server/api.ts)와 동일 규칙: 영문 대소문자·숫자·밑줄(_) 만 허용.
+export const ID_PW_ALLOWED = /^[A-Za-z0-9_]+$/
+
+function validatePassword(pw: string): { valid: boolean; lengthOk: boolean; comboOk: boolean; charsetOk: boolean } {
   const lengthOk = pw.length >= 8 && pw.length <= 16
+  const charsetOk = ID_PW_ALLOWED.test(pw)
   const categories = [
     /[A-Z]/.test(pw),
     /[a-z]/.test(pw),
     /[0-9]/.test(pw),
-    /[^A-Za-z0-9]/.test(pw)
+    /_/.test(pw)
   ].filter(Boolean).length
   const comboOk = categories >= 2
-  return { valid: lengthOk && comboOk, lengthOk, comboOk }
+  return { valid: lengthOk && charsetOk && comboOk, lengthOk, comboOk, charsetOk }
 }
 
 export default function SignupFormPage({ role }: Props) {
@@ -168,6 +172,8 @@ export default function SignupFormPage({ role }: Props) {
   const handleCheckId = async () => {
     const id = form.id.trim()
     if (!id) return
+    // 서버(server/api.ts)와 동일 규칙 — 중복 조회 전에 형식부터 거른다.
+    if (!ID_PW_ALLOWED.test(id)) { setIdStatus('format'); return }
     setIdStatus('checking')
     try {
       const res = await fetch(`/api/auth/check-id?id=${encodeURIComponent(id)}`)
@@ -228,10 +234,11 @@ export default function SignupFormPage({ role }: Props) {
   const idStatusMsg =
     idStatus === 'available' ? '사용 가능한 아이디입니다.' :
     idStatus === 'taken'     ? '이미 사용 중인 아이디 입니다.' :
-    idStatus === 'error'     ? '이미 사용 중인 아이디 입니다.' : ''
+    idStatus === 'error'     ? '이미 사용 중인 아이디 입니다.' :
+    idStatus === 'format'    ? '아이디는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.' : ''
   const idStatusColor =
     idStatus === 'available' ? 'text-brand' :
-    (idStatus === 'taken' || idStatus === 'error') ? 'text-brand-danger' : ''
+    (idStatus === 'taken' || idStatus === 'error' || idStatus === 'format') ? 'text-brand-danger' : ''
 
   if (submitted) {
     const isDoctor = role === 'doctor'
@@ -345,12 +352,13 @@ export default function SignupFormPage({ role }: Props) {
               {form.password.length > 0 && (
                 <div className="mt-2 space-y-1">
                   <RuleRow pass={pwValidation.lengthOk} text="8~16자" />
-                  <RuleRow pass={pwValidation.comboOk}  text="영문/숫자/특수문자 2가지 이상 조합" />
+                  <RuleRow pass={pwValidation.charsetOk} text="영문 대소문자·숫자·밑줄(_)만 사용" />
+                  <RuleRow pass={pwValidation.comboOk}  text="영문/숫자/밑줄 2가지 이상 조합" />
                 </div>
               )}
               {form.password.length === 0 && (
                 <div className="mt-1 text-[12px] text-ink-400">
-                  8~16자의 영문/숫자/특수문자 2가지 이상으로 조합해주세요.
+                  8~16자의 영문/숫자/밑줄(_) 2가지 이상으로 조합해주세요. 한글·공백·특수문자는 사용할 수 없습니다.
                 </div>
               )}
             </div>

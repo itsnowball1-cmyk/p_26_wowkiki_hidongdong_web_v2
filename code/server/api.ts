@@ -632,6 +632,30 @@ function ojoumList(mispron: any): Array<{ aim_joum: unknown; pos: unknown; ch_jo
 const tryJson = (s: unknown): any => { if (typeof s !== 'string' || s === '') return null; try { return JSON.parse(s) } catch { return null } }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// ─── ID/PW 문자 규칙 ─────────────────────────────────────────────────────────
+// 한글 아이디·비밀번호가 일부 기능에서 오류를 유발해 신규 등록을 입구에서 막는다.
+// 허용 = 영문 대소문자 + 숫자 + 밑줄(_). 화면 검증만으로는 레거시(Unity) 경로로 뚫리므로
+// 서버의 모든 기록 지점(가입 4곳 + 비밀번호 변경 2곳)에서 공통으로 호출한다.
+const ID_PW_ALLOWED = /^[A-Za-z0-9_]+$/
+// tb_member.id 는 varchar(45) 지만 이 값을 그대로 복사해 담는 tb_childact_report.id 가
+// varchar(40) 이라 짧은 쪽에 맞춘다. pw 는 tb_member.pw(varchar(45)) 기준.
+const ID_MAX_LEN = 40
+const PW_MAX_LEN = 45
+
+/** 통과 시 null, 위반 시 사용자에게 보여줄 사유. */
+function idFormatError(v: unknown): string | null {
+  if (typeof v !== 'string' || v.length === 0) return '아이디를 입력해주세요.'
+  if (v.length > ID_MAX_LEN) return `아이디는 ${ID_MAX_LEN}자 이하로 입력해주세요.`
+  if (!ID_PW_ALLOWED.test(v)) return '아이디는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
+  return null
+}
+function pwFormatError(v: unknown): string | null {
+  if (typeof v !== 'string' || v.length === 0) return '비밀번호를 입력해주세요.'
+  if (v.length > PW_MAX_LEN) return `비밀번호는 ${PW_MAX_LEN}자 이하로 입력해주세요.`
+  if (!ID_PW_ALLOWED.test(v)) return '비밀번호는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
+  return null
+}
+
 // ─── 인증 헬퍼 ───────────────────────────────────────────────────────────────
 
 async function getCurrentUser(conn: Connection, request: Request): Promise<StaffRow | null> {
@@ -774,6 +798,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       const { role, id, pw, name, phone, email, depart_code, license_file_nm, license_file_data } = body
       const instt_code = (body.instt_code ?? '').trim().toUpperCase()
       if (!role || !id || !pw || !name || !instt_code) return err(400, '필수 항목이 누락되었습니다.')
+      const signupIdErr = idFormatError(id) ?? pwFormatError(pw)
+      if (signupIdErr) return err(400, signupIdErr)
       if (role !== 'doctor' && role !== 'therapist') return err(400, '유효하지 않은 역할입니다.')
       if (!BUILTIN_INSTITUTION_CODES.has(instt_code)) {
         const [validRows] = await conn.query<RowDataPacket[]>(
@@ -861,6 +887,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
 
       if (!institutionType || !institutionName || !name || !id || !pw)
         return err(400, '필수 항목이 누락되었습니다.')
+
+      const adminFormatErr = idFormatError(id) ?? pwFormatError(pw)
+      if (adminFormatErr) return err(400, adminFormatErr)
 
       // ID 중복 확인
       const [existRows] = await conn.query<RowDataPacket[]>(
@@ -1200,6 +1229,9 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         } else if (!id || !pw || !mtype || !name) {
           return legacyMsg(false, -30001)
         }
+        // 아동 계정이 이 경로로 만들어진다. 화면 검증이 없는 클라이언트라 서버에서 막는다.
+        // -30002 = '필요한 parameter가 잘못 됐습니다.' (기존 코드라 구버전 앱도 문구를 표시함)
+        if (idFormatError(id) || pwFormatError(pw)) return legacyMsg(false, -30002)
         const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [id])
         if (exist[0]) return legacyMsg(false, -18)
         const [r] = await conn.query<ResultSetHeader>(
@@ -1635,6 +1667,10 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
         const [[m]] = await conn.query<RowDataPacket[]>(`SELECT pw FROM tb_member WHERE idx = ? LIMIT 1`, [user.idx]) as [RowDataPacket[], unknown]
         if (!m || (m as RowDataPacket).pw !== body.current_pw) return err(400, '현재 비밀번호가 일치하지 않습니다.')
       }
+      if (body.pw) {
+        const e = pwFormatError(body.pw)
+        if (e) return err(400, e)
+      }
       const sets: string[] = []
       const vals: unknown[] = []
       if (body.name) { sets.push('name = ?'); vals.push(body.name) }
@@ -1670,6 +1706,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
       if (user.mtype !== 'sadmin') return err(403, '슈퍼 관리자만 가능합니다.')
       const body = (await request.json().catch(() => ({}))) as { id?: string; pw?: string; name?: string; nickname?: string; email?: string; phone?: string }
       if (!body.id || !body.pw || !body.name) return err(400, '필수 항목 누락')
+      const wadminFormatErr = idFormatError(body.id) ?? pwFormatError(body.pw)
+      if (wadminFormatErr) return err(400, wadminFormatErr)
       const [exist] = await conn.query<RowDataPacket[]>(`SELECT idx FROM tb_member WHERE id = ? LIMIT 1`, [body.id])
       if ((exist as RowDataPacket[]).length > 0) return err(409, '이미 사용 중인 아이디입니다.')
       await conn.query(
@@ -2999,6 +3037,8 @@ async function handleApi(url: URL, request: Request, conn: Connection, env: Env,
     if (path === '/api/mypage/password' && method === 'PUT') {
       const body = (await request.json().catch(() => ({}))) as { current_pw?: string; pw?: string }
       if (!body.current_pw || !body.pw) return err(400, '필수 항목 누락')
+      const newPwErr = pwFormatError(body.pw)
+      if (newPwErr) return err(400, newPwErr)
       const [[m]] = await conn.query<RowDataPacket[]>(
         `SELECT pw FROM tb_member WHERE idx = ? LIMIT 1`, [user.idx]
       ) as [RowDataPacket[], unknown]

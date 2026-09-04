@@ -44,10 +44,14 @@ const SHEET_OPTIONS = ['1-10개', '11-20개', '21-30개', '31개 이상', '사�
 
 type IdStatus = 'idle' | 'checking' | 'available' | 'taken' | 'error'
 
+// 서버(server/api.ts)와 동일 규칙: 영문 대소문자·숫자·밑줄(_) 만 허용.
+const ID_PW_ALLOWED = /^[A-Za-z0-9_]+$/
+
 function validatePassword(pw: string) {
   const lengthOk = pw.length >= 8 && pw.length <= 16
-  const categories = [/[A-Z]/.test(pw), /[a-z]/.test(pw), /[0-9]/.test(pw), /[^A-Za-z0-9]/.test(pw)].filter(Boolean).length
-  return { valid: lengthOk && categories >= 2, lengthOk, comboOk: categories >= 2 }
+  const charsetOk = ID_PW_ALLOWED.test(pw)
+  const categories = [/[A-Z]/.test(pw), /[a-z]/.test(pw), /[0-9]/.test(pw), /_/.test(pw)].filter(Boolean).length
+  return { valid: lengthOk && charsetOk && categories >= 2, lengthOk, comboOk: categories >= 2, charsetOk }
 }
 
 export default function AdminSignupFormPage() {
@@ -411,10 +415,11 @@ export default function AdminSignupFormPage() {
               {form.password.length > 0 ? (
                 <div className="mt-2 space-y-1">
                   <RuleRow pass={pwValidation.lengthOk} text="8~16자" />
-                  <RuleRow pass={pwValidation.comboOk} text="영문/숫자/특수문자 2가지 이상 조합" />
+                  <RuleRow pass={pwValidation.charsetOk} text="영문 대소문자·숫자·밑줄(_)만 사용" />
+                  <RuleRow pass={pwValidation.comboOk} text="영문/숫자/밑줄 2가지 이상 조합" />
                 </div>
               ) : (
-                <div className="mt-1 text-[12px] text-ink-400">8~16자의 영문/숫자/특수문자 2가지 이상으로 조합해주세요.</div>
+                <div className="mt-1 text-[12px] text-ink-400">8~16자의 영문/숫자/밑줄(_) 2가지 이상으로 조합해주세요. 한글·공백·특수문자는 사용할 수 없습니다.</div>
               )}
             </div>
           </FormRow>

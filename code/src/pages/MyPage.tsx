@@ -607,10 +607,14 @@ function PhoneChangeModal({
   )
 }
 
+// 서버(server/api.ts)와 동일 규칙: 영문 대소문자·숫자·밑줄(_) 만 허용.
+const ID_PW_ALLOWED = /^[A-Za-z0-9_]+$/
+
 function validatePassword(pw: string) {
   const lengthOk = pw.length >= 10 && pw.length <= 16
-  const categories = [/[A-Z]/.test(pw), /[a-z]/.test(pw), /[0-9]/.test(pw), /[^A-Za-z0-9]/.test(pw)].filter(Boolean).length
-  return { valid: lengthOk && categories >= 2, lengthOk, comboOk: categories >= 2 }
+  const charsetOk = ID_PW_ALLOWED.test(pw)
+  const categories = [/[A-Z]/.test(pw), /[a-z]/.test(pw), /[0-9]/.test(pw), /_/.test(pw)].filter(Boolean).length
+  return { valid: lengthOk && charsetOk && categories >= 2, lengthOk, comboOk: categories >= 2, charsetOk }
 }
 
 function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
@@ -681,7 +685,7 @@ function PasswordChangeModal({ open, onClose, onChanged }: { open: boolean; onCl
         <div className="flex mt-[7px]">
           <div className="w-[123px] shrink-0" />
           <p className={`text-[10px] font-medium ${constraintFailed ? 'text-red-500' : 'text-[#B1B1B1]'}`}>
-            (영문 대소문자/숫자/특수문자 중 2가지 이상 조합, 10자~16자 사이)
+            (영문 대소문자/숫자/밑줄(_) 중 2가지 이상 조합, 10자~16자 사이 · 한글·공백·특수문자 불가)
           </p>
         </div>
 
