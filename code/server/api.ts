@@ -665,7 +665,7 @@ function pwFormatError(v: unknown): string | null {
   if (v.length > PW_MAX_LEN) return `비밀번호는 ${PW_MAX_LEN}자 이하로 입력해주세요.`
   if (!ID_PW_ALLOWED.test(v)) {
     return HANGUL_RE.test(v)
-      ? '비밀번호에 한글은 사용할 수 없습니다. 영문 대소문자, 숫자, 밑줄(_)만 입력해주세요.'
+      ? '비밀번호에 한글과 특수문자는 사용할 수 없습니다.'
       : '비밀번호는 영문 대소문자, 숫자, 밑줄(_)만 사용할 수 있습니다.'
   }
   return null
