@@ -1,11 +1,18 @@
 # NAS 배포용 compose. /volume1/docker/hidongdong_web/ 에서 실행됨.
 # .env 가 같은 디렉터리에 있어야 함 (DB 비밀번호 등).
+#
+# ⚠ restart: always (unless-stopped 아님) — 운영 무중단 목적.
+#   Container Manager 패키지가 재시작/업데이트되면 DSM 이 컨테이너를 정상 종료시키는데,
+#   unless-stopped 는 그 "정지됨" 상태를 사람이 끈 것으로 보고 데몬 재기동 시 살리지 않는다.
+#   (2026-08-17 dev, 2026-09-07 운영 전체가 이 이유로 내려간 채 방치됨)
+#   always 는 정지 상태였어도 데몬이 뜨면 무조건 재시작한다.
+#   ※ dev(deploy/nas-dev/)는 의도적으로 unless-stopped 유지 — 내려둔 상태를 존중해야 하므로.
 
 services:
   db:
     image: mariadb:10.3
     container_name: hidongdong-db
-    restart: unless-stopped
+    restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       MYSQL_DATABASE: ${DB_DATABASE:-wowkiki}
@@ -32,7 +39,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     container_name: hidongdong-api
-    restart: unless-stopped
+    restart: always
     environment:
       DB_HOST: db
       DB_PORT: 3306
@@ -71,7 +78,7 @@ services:
       context: .
       dockerfile: Dockerfile.web
     container_name: hidongdong-web
-    restart: unless-stopped
+    restart: always
     ports:
       - "3011:80"
     depends_on:

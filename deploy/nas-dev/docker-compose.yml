@@ -4,6 +4,11 @@
 #   - 컨테이너 이름: hidongdong-dev-*  (운영은 hidongdong-*)
 #   - DB 볼륨: hidongdong-dev-db-data  (운영과 별도)
 # Dockerfile/nginx.conf 는 운영(deploy/nas/) 의 것을 동일하게 복사해 둠.
+#
+# ⚠ restart: unless-stopped 유지 (운영은 always) — 의도적 차이.
+#   dev 는 테스트 중 일부러 내려두는 경우가 있어, 데몬 재기동 때 멋대로 살아나면 곤란하다.
+#   대신 Container Manager 패키지 재시작 후에는 수동으로 올려야 한다(2026-08-17 사례).
+#   운영이 always 인 사유는 deploy/nas/docker-compose.yml 머리말 참조.
 
 services:
   db:

@@ -1,12 +1,15 @@
 # NAS 정적 파일 서버 (`api.wowkiki.kr` 대체용)
 # /volume1/docker/files_wowkiki/ 에서 실행.
 # dataCenter/ 디렉터리는 같은 폴더에 위치하며 AWS 에서 rsync 로 채워둠.
+#
+# ⚠ restart: always — 운영(진단/치료 녹음 재생)이 이 서버에 의존하므로 deploy/nas/ 와 동일 정책.
+#   사유는 deploy/nas/docker-compose.yml 머리말 참조.
 
 services:
   files:
     image: nginx:alpine
     container_name: hidongdong-files
-    restart: unless-stopped
+    restart: always
     ports:
       - "3013:80"
     volumes:
